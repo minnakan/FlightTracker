@@ -142,6 +142,8 @@ private:
 
     void loadConfig();
 
+    void updateSelectionGraphic();
+
     Esri::ArcGISRuntime::Map *m_map = nullptr;
     Esri::ArcGISRuntime::MapQuickView *m_mapView = nullptr;
 
@@ -156,6 +158,7 @@ private:
     QString m_accessToken;
 
     Esri::ArcGISRuntime::GraphicsOverlay* m_flightOverlay;
+    Esri::ArcGISRuntime::GraphicsOverlay* m_selectionOverlay;
 
     QString m_selectedFlightTitle;
     QString m_selectedFlightInfo;

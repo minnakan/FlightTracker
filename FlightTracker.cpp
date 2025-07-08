@@ -31,6 +31,8 @@
 #include "SpatialReference.h"
 #include "GraphicListModel.h"
 #include "GraphicsOverlayListModel.h"
+#include "SimpleMarkerSymbol.h"
+#include "SimpleLineSymbol.h"
 
 #include "Popup.h"
 #include "PopupDefinition.h"
@@ -67,6 +69,7 @@ FlightTracker::FlightTracker(QObject *parent /* = nullptr */)
     m_displayUpdateTimer->start();
 
     m_flightOverlay = new GraphicsOverlay(this);
+    m_selectionOverlay = new GraphicsOverlay(this);
 }
 
 
@@ -106,7 +109,9 @@ void FlightTracker::setMapView(MapQuickView *mapView)
     m_mapView = mapView;
     m_mapView->setMap(m_map);
 
+
     m_mapView->graphicsOverlays()->append(m_flightOverlay);
+    m_mapView->graphicsOverlays()->append(m_selectionOverlay);
 
     emit mapViewChanged();
 }
@@ -328,11 +333,8 @@ TextSymbol* FlightTracker::getSymbolForCategory(int category, bool onGround, dou
                                         VerticalAlignment::Middle,
                                         this);
 
-    // Use system font for Unicode support
-    symbol->setFontFamily("Arial Unicode MS");  // Good Unicode support
-    // Alternative font families with good Unicode support:
-    // symbol->setFontFamily("Segoe UI Symbol");  // Windows
-    // symbol->setFontFamily("Apple Symbols");    // macOS
+    symbol->setFontFamily("Arial Unicode MS");
+
 
     return symbol;
 }
@@ -529,6 +531,7 @@ void FlightTracker::selectFlightAtPoint(QPointF screenPoint)
             // Set new selection
             m_selectedGraphic = foundGraphic;
             createFlightPopup(foundGraphic, foundFlightData);
+            updateSelectionGraphic();
         }
     } else {
         // No flight found - clear selection
@@ -552,6 +555,7 @@ void FlightTracker::clearFlightSelection()
         m_selectedFlightPopup = nullptr;
         QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
     }
+    m_selectionOverlay->graphics()->clear();
 }
 
 void FlightTracker::createFlightPopup(Esri::ArcGISRuntime::Graphic* flightGraphic, const QJsonArray& flightData)
@@ -967,3 +971,80 @@ void FlightTracker::setSelectedVerticalStatus(const QString& status)
         applyFilters();
     }
 }
+
+void FlightTracker::updateSelectionGraphic()
+{
+    m_selectionOverlay->graphics()->clear();
+
+    if (!m_selectedGraphic || !m_flightOverlay)
+        return;
+
+    auto* originalSymbol = dynamic_cast<TextSymbol*>(m_selectedGraphic->symbol());
+    if (!originalSymbol)
+        return;
+
+    GraphicListModel* graphics = m_flightOverlay->graphics();
+    int selectedIndex = -1;
+    for (int i = 0; i < graphics->size(); ++i) {
+        if (graphics->at(i) == m_selectedGraphic) {
+            selectedIndex = i;
+            break;
+        }
+    }
+
+    if (selectedIndex == -1)
+        return;
+
+    QString cacheKey = QString::number(selectedIndex);
+    QJsonArray flightData = m_flightDataCache.value(cacheKey);
+    if (flightData.isEmpty())
+        return;
+
+    double longitude = flightData[5].toDouble();
+    double latitude = flightData[6].toDouble();
+    Point flightPoint(longitude, latitude, SpatialReference::wgs84());
+
+    QString callsign = flightData[1].toString().trimmed();
+    QString icao = flightData[0].toString();
+    QString labelText = !callsign.isEmpty() ? callsign : icao.left(6);
+
+    float originalSize = originalSymbol->size();
+    float ringSize = originalSize + 14.0f;
+
+    SimpleLineSymbol* outline = new SimpleLineSymbol(
+        SimpleLineSymbolStyle::Solid,
+        QColor(255, 255, 255),
+        2.5f,
+        this
+        );
+
+    SimpleMarkerSymbol* ringSymbol = new SimpleMarkerSymbol(
+        SimpleMarkerSymbolStyle::Circle,
+        QColor(Qt::transparent),
+        ringSize,
+        this
+        );
+    ringSymbol->setOutline(outline);
+
+    Graphic* ringGraphic = new Graphic(flightPoint, ringSymbol, this);
+    m_selectionOverlay->graphics()->append(ringGraphic);
+
+    TextSymbol* labelSymbol = new TextSymbol(labelText,
+                                             QColor(Qt::white),
+                                             14.0f,
+                                             HorizontalAlignment::Center,
+                                             VerticalAlignment::Top,
+                                             this);
+    labelSymbol->setFontFamily("Arial");
+    labelSymbol->setAngle(0.0);
+    labelSymbol->setHaloColor(Qt::gray);
+    labelSymbol->setOffsetY(-16.0f);
+    labelSymbol->setHaloWidth(1.0f);
+
+    Point labelPoint(longitude, latitude - 0.0003, SpatialReference::wgs84());
+    Graphic* labelGraphic = new Graphic(labelPoint, labelSymbol, this);
+    m_selectionOverlay->graphics()->append(labelGraphic);
+}
+
+
+
