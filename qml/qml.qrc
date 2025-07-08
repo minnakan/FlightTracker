@@ -1,0 +1,42 @@
+<RCC>
+    <qresource prefix="/qml">
+        <file>main.qml</file>
+        <file>FlightTrackerForm.qml</file>
+        <file>MenuScreen.qml</file>
+        <file>flighticons.ttf</file>
+        <file>FilterPanel.qml</file>
+        <file>CountryFilterTree.qml</file>
+        <file>StatusFilterGroup.qml</file>
+        <file>RangeFilterGroup.qml</file>
+    </qresource>
+    <qresource prefix="/images">
+        <file>RadarLogo.png</file>
+        <file>FlightIcon.png</file>
+        <file>FlightIcons/IconType1.png</file>
+        <file>FlightIcons/IconType2.png</file>
+        <file>FlightIcons/IconType3.png</file>
+        <file>FlightIcons/IconType4.png</file>
+        <file>FlightIcons/IconType5.png</file>
+        <file>FlightIcons/IconType6.png</file>
+        <file>FlightIcons/IconType7.png</file>
+        <file>FlightIcons/IconType8.png</file>
+        <file>FlightIcons/IconType9.png</file>
+        <file>FlightIcons/IconType10.png</file>
+        <file>FlightIcons/IconType11.png</file>
+        <file>FlightIcons/IconType12.png</file>
+        <file>FlightIcons/IconType13.png</file>
+        <file>FlightIcons/IconType14.png</file>
+        <file>FlightIcons/IconType15.png</file>
+        <file>FlightIcons/IconType16.png</file>
+        <file>FlightIcons/IconType17.png</file>
+        <file>FlightIcons/IconType18.png</file>
+        <file>FlightIcons/IconType19.png</file>
+        <file>FlightIcons/IconType20.png</file>
+    </qresource>
+    <qresource prefix="/resources">
+        <file>countries.json</file>
+    </qresource>
+	    <qresource prefix="/config">
+        <file>Config/config.json</file>
+    </qresource>
+</RCC>
