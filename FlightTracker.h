@@ -64,6 +64,8 @@ class FlightTracker : public QObject
 
     Q_PROPERTY(QString selectedVerticalStatus READ selectedVerticalStatus WRITE setSelectedVerticalStatus NOTIFY selectedVerticalStatusChanged)
 
+    Q_PROPERTY(bool showTrack READ showTrack WRITE setShowTrack NOTIFY showTrackChanged)
+
 public:
     explicit FlightTracker(QObject *parent = nullptr);
     ~FlightTracker() override;
@@ -97,6 +99,9 @@ public:
     QString selectedVerticalStatus() const { return m_selectedVerticalStatus; }
     void setSelectedVerticalStatus(const QString& status);
 
+    bool showTrack() const { return m_showTrack; }
+    void setShowTrack(bool show);
+
 public slots:
     void authenticate();
     Q_INVOKABLE void selectFlightAtPoint(QPointF screenPoint);
@@ -116,6 +121,7 @@ signals:
     void altitudeFilterChanged();
     void speedFilterChanged();
     void selectedVerticalStatusChanged();
+    void showTrackChanged();
 
 private:
     Esri::ArcGISRuntime::MapQuickView *mapView() const;
@@ -144,6 +150,10 @@ private:
 
     void updateSelectionGraphic();
 
+    void fetchFlightTrack(const QString& icao24);
+    void clearTrackGraphics();
+    void drawFlightTrack(const QJsonObject& trackData);
+
     Esri::ArcGISRuntime::Map *m_map = nullptr;
     Esri::ArcGISRuntime::MapQuickView *m_mapView = nullptr;
 
@@ -159,6 +169,7 @@ private:
 
     Esri::ArcGISRuntime::GraphicsOverlay* m_flightOverlay;
     Esri::ArcGISRuntime::GraphicsOverlay* m_selectionOverlay;
+    Esri::ArcGISRuntime::GraphicsOverlay* m_trackOverlay;
 
     QString m_selectedFlightTitle;
     QString m_selectedFlightInfo;
@@ -187,9 +198,14 @@ private:
 
     QString m_selectedVerticalStatus = "All";
 
+    bool m_showTrack = false;
+
+    QString m_selectedIcao24;
+
 private slots:
     void onAuthenticationReply();
     void onFlightDataReply();
+    void onTrackDataReply();
 };
 
 #endif // FLIGHTTRACKER_H

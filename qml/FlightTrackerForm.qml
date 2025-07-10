@@ -35,6 +35,7 @@ Item {
         color: "transparent"
 
         MouseArea {
+            id: mapMouseArea
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton
 
@@ -343,7 +344,7 @@ Item {
         color: Calcite.Calcite.foreground1
         border.color: Calcite.Calcite.border1
         border.width: 1
-        radius: 4
+        radius: 0
         z: 15
         visible: model.isAuthenticated
 
@@ -397,15 +398,66 @@ Item {
         }
     }
 
-    FilterPanel {
-        id: filterPanel
+    Rectangle {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: 16
         anchors.rightMargin: 16
+        width: filterControlsRow.width + 20
+        height: filterControlsRow.height + 12
+        color: Calcite.Calcite.foreground1
+        border.color: Calcite.Calcite.border1
+        border.width: 1
+        radius: 0
         z: 25
         visible: model.isAuthenticated
-        flightModel: model
+
+
+        Row {
+            id: filterControlsRow
+            anchors.centerIn: parent
+            spacing: 16
+
+            // Track History Toggle
+            Row {
+                spacing: 8
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                    text: "Show Track"
+                    color: Calcite.Calcite.text1
+                    font.pixelSize: 12
+                    font.family: "Segoe UI"
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Calcite.Switch {
+                    id: trackSwitch
+                    checked: false
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    onCheckedChanged: {
+                        model.showTrack = checked
+                    }
+                }
+            }
+
+            // Separator line
+            Rectangle {
+                width: 1
+                height: parent.height - 16
+                color: Calcite.Calcite.border2
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            // Filter Panel (embedded without its own container)
+            FilterPanel {
+                id: filterPanel
+                anchors.verticalCenter: parent.verticalCenter
+                flightModel: model
+                height: parent.height
+            }
+        }
     }
     // Declare the C++ instance which creates the map etc. and supply the view
     FlightTracker {

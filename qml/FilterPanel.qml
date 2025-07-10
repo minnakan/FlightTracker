@@ -15,6 +15,7 @@ Item {
     width: Math.min(500, parent.width * 0.4)
     height: filterButton.height
 
+
     // Filter Button
     Calcite.Button {
         id: filterButton
@@ -34,13 +35,20 @@ Item {
     // Filter Popup using Calcite.Popup
     Calcite.Popup {
         id: filterPopup
-        x: filterButton.x + filterButton.width - width
-        y: filterButton.y + filterButton.height + 8
-        width: Math.min(500, root.parent.width * 0.4)
-        height: Math.min(600, root.parent.height * 0.8)
+        x: filterButton.x + filterButton.width - width + 10 // manual offset number bad :(
+        y: filterButton.y + filterButton.height + 10
+        width: Math.min(500, window.width * 0.4)
+        height: Math.min(600, window.height * 0.8)
 
         modal: false
         closePolicy: Popup.NoAutoClose
+
+        background: Rectangle {
+            color: Calcite.Calcite.foreground1
+            border.color: Calcite.Calcite.border1
+            border.width: 1
+        }
+
 
         // Header with title - no close button
         Rectangle {
@@ -49,8 +57,8 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             height: 48
-            color: Calcite.Calcite.foreground1  // Same as flight info header
-            border.color: Calcite.Calcite.border2
+            color: Calcite.Calcite.foreground2
+            border.color: Calcite.Calcite.border1
             border.width: 1
 
             // Header title - centered
@@ -84,7 +92,7 @@ Item {
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
             background: Rectangle {
-                color: Calcite.Calcite.foreground1
+                color: Calcite.Calcite.foreground2
                 border.color: Calcite.Calcite.border2
                 border.width: 1
             }
@@ -109,7 +117,6 @@ Item {
                     CountryFilterTree {
                         id: countryTree
                         width: parent.width
-                        property var model: root.flightModel
 
                         onSelectionChanged: function(selectedCountries) {
                             if (root.flightModel) {

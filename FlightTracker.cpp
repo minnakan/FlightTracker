@@ -40,6 +40,9 @@
 #include "PopupDefinition.h"
 #include "TextPopupElement.h"
 
+#include "Polyline.h"
+#include "PolylineBuilder.h"
+
 #include <QLineF>
 #include <QDateTime>
 #include "Geometry.h"
@@ -70,6 +73,7 @@ FlightTracker::FlightTracker(QObject *parent /* = nullptr */)
 
     m_flightOverlay = new GraphicsOverlay(this);
     m_selectionOverlay = new GraphicsOverlay(this);
+    m_trackOverlay = new GraphicsOverlay(this);
 }
 
 
@@ -109,7 +113,7 @@ void FlightTracker::setMapView(MapQuickView *mapView)
     m_mapView = mapView;
     m_mapView->setMap(m_map);
 
-
+    m_mapView->graphicsOverlays()->append(m_trackOverlay);
     m_mapView->graphicsOverlays()->append(m_flightOverlay);
     m_mapView->graphicsOverlays()->append(m_selectionOverlay);
 
@@ -191,10 +195,14 @@ void FlightTracker::fetchFlightData()
         return;
     }
 
-    //Clear existing flight selection
-    clearFlightSelection();
+
+    if (m_selectedIcao24.isEmpty()) {
+        clearFlightSelection();
+    }
+    m_selectedGraphic = nullptr;
 
     qDebug() << "Fetching all flight data...";
+
 
     QUrl flightUrl("https://opensky-network.org/api/states/all");
     QNetworkRequest request(flightUrl);
@@ -368,9 +376,14 @@ void FlightTracker::onFlightDataReply()
     QJsonDocument doc = QJsonDocument::fromJson(data);
     QJsonObject obj = doc.object();
 
+
     if (obj.contains("states")) {
         QJsonArray states = obj["states"].toArray();
         qDebug() << "Adding" << states.size() << "flights to map";
+
+        //for persistant selection
+        Graphic* graphicToSelect = nullptr;
+        QJsonArray flightDataToSelect;
 
         for (const QJsonValue& value : std::as_const(states)) {
             QJsonArray flight = value.toArray();
@@ -400,6 +413,11 @@ void FlightTracker::onFlightDataReply()
                     heading = 0.0;
                 }
 
+                //for persistant selection
+                if (!m_selectedIcao24.isEmpty() && flight[0].toString() == m_selectedIcao24) {
+                    flightDataToSelect = flight;
+                }
+
                 // Get category from callsign
                 int category = getCategoryFromCallsign(callsign);
 
@@ -419,6 +437,11 @@ void FlightTracker::onFlightDataReply()
 
                 Point flightPoint(longitude, latitude, SpatialReference::wgs84());
                 Graphic* flightGraphic = new Graphic(flightPoint, symbol, this);
+
+                //for persistant selection
+                if (!flightDataToSelect.isEmpty() && flightDataToSelect == flight) {
+                    graphicToSelect = flightGraphic;
+                }
 
                 m_flightOverlay->graphics()->append(flightGraphic);
             }
@@ -462,6 +485,16 @@ void FlightTracker::onFlightDataReply()
         } else {
             // On subsequent updates, apply the current filter to new data
             applyFilters();
+        }
+
+        //Restore selection
+        if (graphicToSelect && !flightDataToSelect.isEmpty()) {
+            m_selectedGraphic = graphicToSelect;
+            createFlightPopup(m_selectedGraphic, flightDataToSelect);
+            updateSelectionGraphic();
+            if (m_showTrack) {
+                fetchFlightTrack(m_selectedIcao24);
+            }
         }
     }
 }
@@ -530,12 +563,17 @@ void FlightTracker::selectFlightAtPoint(QPointF screenPoint)
 
             // Set new selection
             m_selectedGraphic = foundGraphic;
+            m_selectedIcao24 = foundFlightData[0].toString();
             createFlightPopup(foundGraphic, foundFlightData);
             updateSelectionGraphic();
+
+            if (m_showTrack) {
+                fetchFlightTrack(m_selectedIcao24);
+            }
         }
     } else {
-        // No flight found - clear selection
-        clearFlightSelection();
+        // do this to close popup on clicking elsewhere
+        //clearFlightSelection();
     }
 }
 
@@ -543,6 +581,7 @@ void FlightTracker::clearFlightSelection()
 {
     m_selectedFlightTitle.clear();
     m_selectedFlightInfo.clear();
+    m_selectedIcao24.clear();
 
     // Emit signal BEFORE clearing the popup - application closes if we emit after :)
     emit selectedFlightChanged();
@@ -556,6 +595,7 @@ void FlightTracker::clearFlightSelection()
         QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
     }
     m_selectionOverlay->graphics()->clear();
+    clearTrackGraphics();
 }
 
 void FlightTracker::createFlightPopup(Esri::ArcGISRuntime::Graphic* flightGraphic, const QJsonArray& flightData)
@@ -911,7 +951,7 @@ void FlightTracker::applyFilters()
             bool shouldShow = countryMatch && statusMatch && altitudeMatch && speedMatch && verticalMatch;
             graphic->setVisible(shouldShow);
 
-            if (!shouldShow && graphic == m_selectedGraphic) {
+            if (!shouldShow && m_selectedGraphic && graphic == m_selectedGraphic) {
                 clearFlightSelection();
             }
         }
@@ -1046,5 +1086,174 @@ void FlightTracker::updateSelectionGraphic()
     m_selectionOverlay->graphics()->append(labelGraphic);
 }
 
+void FlightTracker::setShowTrack(bool show)
+{
+    if (m_showTrack != show) {
+        m_showTrack = show;
+        emit showTrackChanged();
+
+        if (m_showTrack && m_selectedGraphic) {
+            // Find the ICAO24 for selected flight
+            GraphicListModel* graphics = m_flightOverlay->graphics();
+            for (int i = 0; i < graphics->size(); ++i) {
+                if (graphics->at(i) == m_selectedGraphic) {
+                    QString cacheKey = QString::number(i);
+                    if (m_flightDataCache.contains(cacheKey)) {
+                        QJsonArray flightData = m_flightDataCache[cacheKey];
+                        QString icao24 = flightData[0].toString();
+                        fetchFlightTrack(icao24);
+                    }
+                    break;
+                }
+            }
+        } else if (!m_showTrack) {
+            clearTrackGraphics();
+        }
+    }
+}
+
+void FlightTracker::fetchFlightTrack(const QString& icao24)
+{
+    if (m_accessToken.isEmpty() || icao24.isEmpty()) {
+        return;
+    }
+
+    qDebug() << "Fetching track for aircraft:" << icao24;
+
+    // Use last update timestamp
+    qint64 timestamp = m_lastUpdateDateTime.toSecsSinceEpoch();
+
+    QUrl trackUrl(QString("https://opensky-network.org/api/tracks/all?icao24=%1&time=%2")
+                      .arg(icao24.toLower())
+                      .arg(timestamp));
+
+    QNetworkRequest request(trackUrl);
+    request.setRawHeader("Authorization", QString("Bearer %1").arg(m_accessToken).toUtf8());
+
+    QNetworkReply *reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &FlightTracker::onTrackDataReply);
+}
+
+void FlightTracker::clearTrackGraphics()
+{
+    if (m_trackOverlay) {
+        m_trackOverlay->graphics()->clear();
+    }
+}
+
+void FlightTracker::onTrackDataReply()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) {
+        return;
+    }
+
+    reply->deleteLater();
+
+    if (reply->error() != QNetworkReply::NoError) {
+        qDebug() << "Track data request failed:" << reply->errorString();
+        clearTrackGraphics();
+        return;
+    }
+
+    QByteArray data = reply->readAll();
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    QJsonObject trackObj = doc.object();
+
+    if (!trackObj.isEmpty()) {
+        drawFlightTrack(trackObj);
+    }
+}
+
+void FlightTracker::drawFlightTrack(const QJsonObject& trackData)
+{
+    clearTrackGraphics();
+
+    if (!trackData.contains("path")) {
+        qDebug() << "No path data in track response";
+        return;
+    }
+
+    QJsonArray path = trackData["path"].toArray();
+    if (path.isEmpty()) {
+        qDebug() << "Empty path in track data";
+        return;
+    }
+
+    // Collect all valid points
+    QList<Point> trackPoints;
+    QList<double> altitudes;
+
+    for (const QJsonValue& value : path) {
+        QJsonArray waypoint = value.toArray();
+        if (waypoint.size() >= 6) {
+            double lat = waypoint[1].toDouble();
+            double lon = waypoint[2].toDouble();
+            double altitude = waypoint[3].toDouble(); // meters
+            bool onGround = waypoint[5].toBool();
+
+            // Skip invalid points
+            if (lat == 0.0 && lon == 0.0) continue;
+
+            Point point(lon, lat, SpatialReference::wgs84());
+            trackPoints.append(point);
+
+            // Use 0 altitude if on ground or null
+            if (onGround || std::isnan(altitude)) {
+                altitude = 0.0;
+            }
+            altitudes.append(altitude);
+        }
+    }
+
+    if (trackPoints.size() < 2) {
+        qDebug() << "Not enough points for track";
+        return;
+    }
+
+    // Draw line segments between consecutive points
+    // Each segment gets colored based on the average altitude
+    for (int i = 0; i < trackPoints.size() - 1; ++i) {
+        PolylineBuilder polylineBuilder(SpatialReference::wgs84());
+        polylineBuilder.addPoint(trackPoints[i]);
+        polylineBuilder.addPoint(trackPoints[i + 1]);
+
+        Polyline segment = polylineBuilder.toPolyline();
+
+        // Use average altitude of the two points for color
+        double avgAltitude = (altitudes[i] + altitudes[i + 1]) / 2.0;
+        QColor lineColor = getAltitudeColor(avgAltitude);
+
+        SimpleLineSymbol* lineSymbol = new SimpleLineSymbol(
+            SimpleLineSymbolStyle::Solid,
+            lineColor,
+            3.0f,  // line width
+            this
+            );
+        lineSymbol->setAntiAlias(true);
+
+        Graphic* segmentGraphic = new Graphic(segment, lineSymbol, this);
+        m_trackOverlay->graphics()->append(segmentGraphic);
+    }
+
+    // Add small dots at each waypoint
+    for (int i = 0; i < trackPoints.size(); ++i) {
+        SimpleMarkerSymbol* dotSymbol = new SimpleMarkerSymbol(
+            SimpleMarkerSymbolStyle::Circle,
+            Qt::white,
+            3.0f,  // small dots
+            this
+            );
+        dotSymbol->setOutline(new SimpleLineSymbol(
+            SimpleLineSymbolStyle::Solid,
+            Qt::darkGray,
+            0.5f,
+            this
+            ));
+
+        Graphic* dotGraphic = new Graphic(trackPoints[i], dotSymbol, this);
+        m_trackOverlay->graphics()->append(dotGraphic);
+    }
+}
 
 
