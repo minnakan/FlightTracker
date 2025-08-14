@@ -66,11 +66,15 @@ class FlightTracker : public QObject
 
     Q_PROPERTY(bool showTrack READ showTrack WRITE setShowTrack NOTIFY showTrackChanged)
 
+    Q_PROPERTY(QVariantList visibleFlights READ visibleFlights NOTIFY visibleFlightsChanged)
+    Q_PROPERTY(QString selectedIcao24 READ selectedIcao24 NOTIFY selectedIcao24Changed)
+        
+
 public:
     explicit FlightTracker(QObject *parent = nullptr);
     ~FlightTracker() override;
 
-    bool isAuthenticated() const { return !m_accessToken.isEmpty(); }
+    bool isAuthenticated() const { return !m_accessToken.isEmpty(); }    
 
     //Do not check selectedFlightPopup != nulltpr here beacuse we clear it after emiting signal to prevent app from closing
     bool hasSelectedFlight() const { return !m_selectedFlightInfo.isEmpty(); }
@@ -102,9 +106,13 @@ public:
     bool showTrack() const { return m_showTrack; }
     void setShowTrack(bool show);
 
+    QVariantList visibleFlights() const;
+    QString selectedIcao24() const { return m_selectedIcao24; }
+
 public slots:
     void authenticate();
     Q_INVOKABLE void selectFlightAtPoint(QPointF screenPoint);
+    Q_INVOKABLE void selectFlightByName(const QString& name);
     Q_INVOKABLE void clearFlightSelection();
     Q_INVOKABLE void fetchFlightData();
 
@@ -122,6 +130,8 @@ signals:
     void speedFilterChanged();
     void selectedVerticalStatusChanged();
     void showTrackChanged();
+    void visibleFlightsChanged();
+    void selectedIcao24Changed();
 
 private:
     Esri::ArcGISRuntime::MapQuickView *mapView() const;
@@ -156,6 +166,9 @@ private:
 
     Esri::ArcGISRuntime::Map *m_map = nullptr;
     Esri::ArcGISRuntime::MapQuickView *m_mapView = nullptr;
+    
+        // Cache of currently visible flights for QML
+        QVariantList m_visibleFlights;
 
     //Loads from config in load config
     QString m_clientId = "";

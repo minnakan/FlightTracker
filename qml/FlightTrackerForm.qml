@@ -42,7 +42,7 @@ Item {
 
             onPressed: function(mouse) {
                 mouse.accepted = false
-                model.selectFlightAtPoint(Qt.point(mouse.x, mouse.y))
+                flightTracker.selectFlightAtPoint(Qt.point(mouse.x, mouse.y))
             }
 
             propagateComposedEvents: true
@@ -63,7 +63,7 @@ Item {
         border.width: 1
         radius: 5
         z: 10
-        visible: model.isAuthenticated
+        visible: flightTracker.isAuthenticated
 
         Column {
             anchors.centerIn: parent
@@ -189,12 +189,105 @@ Item {
         }
     }
 
+    //Flights Scroll box
+    Rectangle {
+        id: flightListPanel
+        anchors.right: parent.right
+        anchors.bottom: altitudeLegend.top
+        anchors.rightMargin: 32
+        anchors.bottomMargin: 16
+        width: 400
+        height: 320
+        color: Calcite.Calcite.foreground2
+        border.color: Calcite.Calcite.border1
+        border.width: 1
+        radius: 8
+        z: 12
+        visible: flightTracker.isAuthenticated
+
+        ListView {
+            id: flightListView
+            anchors.fill: parent
+            model: flightTracker.visibleFlights
+            currentIndex: -1
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            highlightMoveDuration: 180
+            highlightFollowsCurrentItem: true
+
+            // Scrollbar styled with Calcite
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AlwaysOn
+                width: 8
+                interactive: true
+                background: Rectangle {
+                    color: Calcite.Calcite.background
+                    radius: 4
+                }
+                contentItem: Rectangle {
+                    color: Calcite.Calcite.brand
+                    radius: 4
+                }
+            }
+
+            delegate: Calcite.ItemDelegate {
+                width: flightListView.width - 16
+                text: modelData.name + " (" + modelData.country + ")"
+                highlighted: modelData.icao24 === flightTracker.selectedIcao24
+                onClicked: flightTracker.selectFlightByName(modelData.name)
+                leftPadding: 12
+                rightPadding: 12
+                topPadding: 8
+                bottomPadding: 8
+                background: Rectangle {
+                    anchors.fill: parent
+                    color: highlighted ? Calcite.Calcite.brand : (hovered ? Calcite.Calcite.foreground1 : "transparent")
+                    opacity: highlighted ? 0.18 : (hovered ? 0.08 : 0)
+                    radius: 6
+                    border.color: highlighted ? Calcite.Calcite.border2 : "transparent"
+                    border.width: highlighted ? 1 : 0
+                }
+                font.pixelSize: 15
+                font.family: "Segoe UI"
+                font.bold: highlighted
+                color: highlighted ? Calcite.Calcite.text1 : Calcite.Calcite.text2
+            }
+
+            Connections {
+                target: flightTracker
+                function onSelectedIcao24Changed() {
+                    var model = flightListView.model;
+                    if (!model || !model.length || flightTracker.selectedIcao24 === undefined || flightTracker.selectedIcao24 === null)
+                        return;
+                    var idx = model.findIndex ? model.findIndex(function(f) { return f.icao24 === flightTracker.selectedIcao24; }) : -1;
+                    if (idx >= 0) {
+                        flightListView.currentIndex = idx;
+                        // Use ListView's itemAt and visualIndexAt for robust visibility check
+                        var item = flightListView.itemAt(idx);
+                        if (!item) {
+                            // Item is not currently visible, scroll to it
+                            flightListView.positionViewAtIndex(idx, ListView.Center);
+                        } else {
+                            var itemY = item.y;
+                            var viewTop = flightListView.contentY;
+                            var viewBottom = viewTop + flightListView.height;
+                            if (itemY < viewTop || (itemY + item.height) > viewBottom) {
+                                flightListView.positionViewAtIndex(idx, ListView.Center);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+
     Rectangle {
         id: authOverlay
         anchors.fill: parent
         color: "black"
         opacity: 0.8
-        visible: !model.isAuthenticated
+        visible: !flightTracker.isAuthenticated
 
         Column {
             anchors.centerIn: parent
@@ -210,7 +303,7 @@ Item {
 
             BusyIndicator {
                 anchors.horizontalCenter: parent.horizontalCenter
-                visible: !model.isAuthenticated
+                visible: !flightTracker.isAuthenticated
             }
         }
     }
@@ -226,7 +319,7 @@ Item {
         border.width: 1
 
         // Initially positioned off-screen to the left
-        x: model.hasSelectedFlight ? 0 : -width
+        x: flightTracker.hasSelectedFlight ? 0 : -width
 
 
         Behavior on x {
@@ -237,7 +330,7 @@ Item {
         }
 
 
-        visible: true//model.hasSelectedFlight
+        visible: true//flightTracker.hasSelectedFlight
 
         // Header bar with close button - Calcite themed
         Rectangle {
@@ -283,7 +376,7 @@ Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        model.clearFlightSelection()
+                        flightTracker.clearFlightSelection()
                     }
                 }
             }
@@ -311,7 +404,7 @@ Item {
             anchors.top: headerBar.bottom
             anchors.bottom: parent.bottom
 
-            popup: model.selectedFlightPopup
+            popup: flightTracker.selectedFlightPopup
             closeCallback: null
             openUrlsWithSystemDefaultApplication: true
             openAttachmentsWithSystemDefaultApplication: true
@@ -346,7 +439,7 @@ Item {
         border.width: 1
         radius: 0
         z: 15
-        visible: model.isAuthenticated
+        visible: flightTracker.isAuthenticated
 
         Row {
             id: controlsRow
@@ -359,7 +452,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
 
                 onClicked: {
-                    model.fetchFlightData()
+                    flightTracker.fetchFlightData()
                 }
             }
 
@@ -386,7 +479,7 @@ Item {
 
                 Text {
                     id: lastUpdateText
-                    text: model.lastUpdateTime
+                    text: flightTracker.lastUpdateTime
                     color: Calcite.Calcite.text1
                     font.pixelSize: 12
                     font.weight: Font.Medium
@@ -410,7 +503,7 @@ Item {
         border.width: 1
         radius: 0
         z: 25
-        visible: model.isAuthenticated
+        visible: flightTracker.isAuthenticated
 
 
         Row {
@@ -437,7 +530,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
 
                     onCheckedChanged: {
-                        model.showTrack = checked
+                        flightTracker.showTrack = checked
                     }
                 }
             }
@@ -454,14 +547,14 @@ Item {
             FilterPanel {
                 id: filterPanel
                 anchors.verticalCenter: parent.verticalCenter
-                flightModel: model
+                flightModel: flightTracker
                 height: parent.height
             }
         }
     }
     // Declare the C++ instance which creates the map etc. and supply the view
     FlightTracker {
-        id: model
+        id: flightTracker 
         mapView: view
 
         onAuthenticationSuccess: {

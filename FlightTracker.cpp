@@ -204,6 +204,7 @@ void FlightTracker::fetchFlightData()
         clearFlightSelection();
     }
     m_selectedGraphic = nullptr;
+    
 
     qDebug() << "Fetching all flight data...";
 
@@ -568,6 +569,7 @@ void FlightTracker::selectFlightAtPoint(QPointF screenPoint)
             // Set new selection
             m_selectedGraphic = foundGraphic;
             m_selectedIcao24 = foundFlightData[0].toString();
+            emit selectedIcao24Changed();
             createFlightPopup(foundGraphic, foundFlightData);
             updateSelectionGraphic();
 
@@ -600,6 +602,7 @@ void FlightTracker::clearFlightSelection()
     }
     m_selectionOverlay->graphics()->clear();
     clearTrackGraphics();
+    emit selectedIcao24Changed();
 }
 
 void FlightTracker::createFlightPopup(Esri::ArcGISRuntime::Graphic* flightGraphic, const QJsonArray& flightData)
@@ -960,6 +963,8 @@ void FlightTracker::applyFilters()
             }
         }
     }
+
+    emit visibleFlightsChanged();
 }
 
 void FlightTracker::setSelectedFlightStatus(const QString& status)
@@ -1260,4 +1265,71 @@ void FlightTracker::drawFlightTrack(const QJsonObject& trackData)
     }
 }
 
+QVariantList FlightTracker::visibleFlights() const
+{
+    QVariantList flights;
+    GraphicListModel* graphics = m_flightOverlay ? m_flightOverlay->graphics() : nullptr;
+    if (!graphics)
+        return flights;
 
+    for (int i = 0; i < graphics->size(); ++i) {
+        Graphic* graphic = graphics->at(i);
+        if (!graphic || !graphic->isVisible())
+            continue;
+        QString cacheKey = QString::number(i);
+        if (!m_flightDataCache.contains(cacheKey))
+            continue;
+        QJsonArray flightData = m_flightDataCache.value(cacheKey);
+        if (flightData.size() < 3)
+            continue;
+        QVariantMap flight;
+        QString callsign = flightData[1].toString().trimmed();
+        QString icao24 = flightData[0].toString();
+        flight["name"] = callsign.isEmpty() ? QString("Flight %1").arg(icao24.left(6)) : callsign;
+        flight["country"] = flightData[2].toString();
+        flight["icao24"] = icao24;
+        flights.append(flight);
+    }
+    return flights;
+}
+
+void FlightTracker::selectFlightByName(const QString& name)
+{
+    if (!m_flightOverlay)
+        return;
+
+    GraphicListModel* graphics = m_flightOverlay->graphics();
+    for (int i = 0; i < graphics->size(); ++i) {
+        Graphic* graphic = graphics->at(i);
+        if (!graphic || !graphic->isVisible())
+            continue;
+        QString cacheKey = QString::number(i);
+        if (!m_flightDataCache.contains(cacheKey))
+            continue;
+        QJsonArray flightData = m_flightDataCache.value(cacheKey);
+        if (flightData.size() < 2)
+            continue;
+        QString callsign = flightData[1].toString().trimmed();
+        QString icao24 = flightData[0].toString();
+        QString displayName = callsign.isEmpty() ? QString("Flight %1").arg(icao24.left(6)) : callsign;
+        if (displayName == name || icao24 == name) {
+            // Select this flight
+            if (m_selectedGraphic != graphic) {
+                if (m_selectedFlightPopup) {
+                    Popup* oldPopup = m_selectedFlightPopup;
+                    m_selectedFlightPopup = nullptr;
+                    QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
+                }
+                m_selectedGraphic = graphic;
+                m_selectedIcao24 = icao24;
+                emit selectedIcao24Changed();
+                createFlightPopup(graphic, flightData);
+                updateSelectionGraphic();
+                if (m_showTrack) {
+                    fetchFlightTrack(m_selectedIcao24);
+                }
+            }
+            return;
+        }
+    }
+}

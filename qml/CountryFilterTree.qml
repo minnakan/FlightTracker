@@ -7,7 +7,7 @@ import "qrc:/esri.com/imports/Calcite" 1.0 as Calcite
 Column {
     id: root
 
-    property var countryData: model.availableCountries || {}
+    property var countryData: flightModel.availableCountries || {}
 
     // Simple object to track what's selected
     property var countrySelection: ({})
@@ -38,7 +38,7 @@ Column {
         if (Object.keys(countryData).length > 0) {
             var newSelection = {}
                 // Check if we already have a selection from the backend
-                if (model && model.selectedCountries && model.selectedCountries.length > 0) {
+                if (flightModel && flightModel.selectedCountries && flightModel.selectedCountries.length > 0) {
                     // Use the backend's current selection instead of selecting all
                     var backendSelected = model.selectedCountries
 
