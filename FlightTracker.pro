@@ -38,7 +38,7 @@ equals(QT_MAJOR_VERSION, 6) {
 	}
 }
 
-ARCGIS_RUNTIME_VERSION = 200.7.0
+ARCGIS_RUNTIME_VERSION = 300.0.0
 include($$PWD/arcgisruntime.pri)
 
 #Arcgis sdk toolkit hardcoding values for now
@@ -50,6 +50,8 @@ isEmpty(TOOLKIT_PATH) {
         TOOLKIT_PATH = "C:/Program Files/ArcGIS SDKs/Qt/toolkit"
     } else:exists("D:/Qt/ArcGisSDK/arcgis-maps-sdk-toolkit-qt") {
         TOOLKIT_PATH = "D:/Qt/ArcGisSDK/arcgis-maps-sdk-toolkit-qt"
+    } else:exists("$$PWD/arcgis-maps-sdk-toolkit-qt") {
+        TOOLKIT_PATH = "$$PWD/arcgis-maps-sdk-toolkit-qt"
     }
 }
 

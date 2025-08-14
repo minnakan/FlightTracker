@@ -57,7 +57,11 @@ FlightTracker::FlightTracker(QObject *parent /* = nullptr */)
     , m_map(new Map(BasemapStyle::ArcGISHumanGeographyDark, this))
     , m_networkManager(new QNetworkAccessManager(this))
 {
-    loadConfig();
+    //Loading open sky network credentials
+    //loadConfig();
+    m_clientId = QString(qgetenv("OPENSKYNETWORK_CLIENT_ID"));
+    m_clientSecret = QString(qgetenv("OPENSKYNETWORK_CLIENT_SECRET"));
+
     loadCountryMappings();
     authenticate();
     m_flightUpdateTimer = new QTimer(this);

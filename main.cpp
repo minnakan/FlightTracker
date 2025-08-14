@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
     //QQuickStyle::addStylePath("qrc:///esri.com/imports/");
 
 
-    const QString accessToken = loadArcGISApiKey();
+    const QString accessToken = QString(qgetenv("ARCGIS_API_KEY"));//loadArcGISApiKey();
 
     if (accessToken.isEmpty()) {
         qWarning()
