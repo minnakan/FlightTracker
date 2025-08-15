@@ -11,6 +11,7 @@
 //
 
 #include "FlightTracker.h"
+#include "Flight3DViewer.h"
 
 #include "ArcGISRuntimeEnvironment.h"
 #include "MapQuickView.h"
@@ -47,7 +48,7 @@ QString loadArcGISApiKey()
     }
 
     qWarning() << "Could not load ArcGIS API key from config.json";
-    return QString("");
+    return QString("AAPTxy8BH1VEsoebNVZXo8HurFMmAdACelayYe6vmgdWf8pLtzxNMyaTjKCbilZ4ImYR2aKCR49hmsR7iZ-tFN7UJ2pXhmRMBw95GUqB8CIL3_wTcpcjgKikr4d-CbPGGDNsutF5G51TlHX3bz-u8a0WSHP4ib3eQl--h9SGmfK0Pf2JYLLy9cSqlpXeH7RxQ7gIEjWbccDVNDdGbG58X02NPqwDDrKwoPgO04Yt80BRfgk.AT1_Efw5YwcY");
 }
 
 int main(int argc, char *argv[])
@@ -96,6 +97,7 @@ int main(int argc, char *argv[])
 
     // Register the FlightTracker (QQuickItem) for QML
     qmlRegisterType<FlightTracker>("Esri.FlightTracker", 1, 0, "FlightTracker");
+    Flight3DViewer::init();
 
     qmlRegisterModule("Calcite", 1, 0);
 

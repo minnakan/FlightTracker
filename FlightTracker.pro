@@ -68,9 +68,11 @@ isEmpty(TOOLKIT_PATH) {
 
 
 HEADERS += \
-    FlightTracker.h
+    FlightTracker.h \
+    flight3dviewer.h
 
 SOURCES += \
+    flight3dviewer.cpp \
     main.cpp \
     FlightTracker.cpp
 

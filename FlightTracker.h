@@ -33,8 +33,8 @@ class TextPopupElement;
 #include <QNetworkReply>
 #include <QTimer>
 #include <QMap>
+#include <QJsonArray>
 
-class QJsonArray;
 
 Q_MOC_INCLUDE("MapQuickView.h")
 Q_MOC_INCLUDE("Popup.h")
@@ -65,6 +65,8 @@ class FlightTracker : public QObject
     Q_PROPERTY(QString selectedVerticalStatus READ selectedVerticalStatus WRITE setSelectedVerticalStatus NOTIFY selectedVerticalStatusChanged)
 
     Q_PROPERTY(bool showTrack READ showTrack WRITE setShowTrack NOTIFY showTrackChanged)
+
+
 
 public:
     explicit FlightTracker(QObject *parent = nullptr);
@@ -107,6 +109,7 @@ public slots:
     Q_INVOKABLE void selectFlightAtPoint(QPointF screenPoint);
     Q_INVOKABLE void clearFlightSelection();
     Q_INVOKABLE void fetchFlightData();
+    Q_INVOKABLE QVariantList getSelectedFlightData();
 
 signals:
     void mapViewChanged();

@@ -31,7 +31,6 @@ ApplicationWindow {
     minimumWidth: 400
     minimumHeight: 300
 
-
     StackView {
         id: stack
         anchors.fill: parent
@@ -45,6 +44,46 @@ ApplicationWindow {
 
     Component {
         id: flightTrackerComponent
-        FlightTrackerForm {}
+        FlightTrackerForm {
+            onSwitchTo3DRequested: function(flightModel) {
+                // Check if the flightModel is valid and has the method
+                if (flightModel && typeof flightModel.getSelectedFlightData === "function") {
+                    var flightData = flightModel.getSelectedFlightData()
+                    stack.push(flight3DComponent, {"flightData": flightData, "flightTracker": flightModel})
+                } else {
+                    console.error("Invalid flight model or missing getSelectedFlightData method")
+                }
+            }
+        }
+    }
+
+    Component {
+        id: flight3DComponent
+        Flight3DView {
+            property var flightData: null
+            property var flightTracker: null
+
+            onBackTo2DRequested: {
+                stack.pop()
+            }
+
+            Component.onCompleted: {
+                // Check if we have valid flight data first
+                if (flightData && Array.isArray(flightData) && flightData.length > 0) {
+                    console.log("Using passed flight data")
+                    flight3DViewer.displayFlight(flightData)
+                } else if (flightTracker && typeof flightTracker.getSelectedFlightData === "function") {
+                    console.log("Getting flight data from tracker")
+                    var data = flightTracker.getSelectedFlightData()
+                    if (data && data.length > 0) {
+                        flight3DViewer.displayFlight(data)
+                    } else {
+                        console.log("No flight data available")
+                    }
+                } else {
+                    console.error("No valid flight tracker or flight data available")
+                }
+            }
+        }
     }
 }

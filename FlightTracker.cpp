@@ -95,6 +95,9 @@ void FlightTracker::loadConfig()
     } else {
         qDebug() << "Could not open config.json, using hardcoded values";
         // Fallback to your current hardcoded values
+        //RELEASE DO NOT PUSH
+        m_clientId = "minnakan-api-client";
+        m_clientSecret = "zJVRrSlv0CCxCQGxcHCqhuiuLcyLFzxR";
     }
 }
 
@@ -545,7 +548,7 @@ void FlightTracker::selectFlightAtPoint(QPointF screenPoint)
                 foundGraphic = graphic;
                 foundFlightData = flightData;
                 qDebug() << "Flight found at index:" << i << "distance:" << distance;
-                break; // Found one, stop searching
+                break;
             }
         }
     }
@@ -1256,4 +1259,23 @@ void FlightTracker::drawFlightTrack(const QJsonObject& trackData)
     }
 }
 
+QVariantList FlightTracker::getSelectedFlightData()
+{
+    if (m_selectedIcao24.isEmpty())
+        return QVariantList();
 
+    // Search through the cache to find the flight with matching ICAO24
+    for (auto it = m_flightDataCache.begin(); it != m_flightDataCache.end(); ++it) {
+        QJsonArray flightData = it.value();
+        if (flightData.size() > 0 && flightData[0].toString() == m_selectedIcao24) {
+            // Convert QJsonArray to QVariantList
+            QVariantList result;
+            for (const QJsonValue& value : flightData) {
+                result.append(value.toVariant());
+            }
+            return result;
+        }
+    }
+
+    return QVariantList();
+}
