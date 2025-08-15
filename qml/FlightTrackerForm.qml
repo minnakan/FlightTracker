@@ -215,19 +215,10 @@ Item {
             highlightMoveDuration: 180
             highlightFollowsCurrentItem: true
 
-            // Scrollbar styled with Calcite
-            ScrollBar.vertical: ScrollBar {
+            // Scrollbar styled to match FilterPanel Calcite style
+            ScrollBar.vertical: Calcite.ScrollBar {
                 policy: ScrollBar.AlwaysOn
-                width: 8
                 interactive: true
-                background: Rectangle {
-                    color: Calcite.Calcite.background
-                    radius: 4
-                }
-                contentItem: Rectangle {
-                    color: Calcite.Calcite.brand
-                    radius: 4
-                }
             }
 
             delegate: Calcite.ItemDelegate {
@@ -262,10 +253,9 @@ Item {
                     var idx = model.findIndex ? model.findIndex(function(f) { return f.icao24 === flightTracker.selectedIcao24; }) : -1;
                     if (idx >= 0) {
                         flightListView.currentIndex = idx;
-                        // Use ListView's itemAt and visualIndexAt for robust visibility check
-                        var item = flightListView.itemAt(idx);
+                        // Testing something here -> it works for now;
+                        var item = 1;
                         if (!item) {
-                            // Item is not currently visible, scroll to it
                             flightListView.positionViewAtIndex(idx, ListView.Center);
                         } else {
                             var itemY = item.y;
