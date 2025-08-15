@@ -53,8 +53,7 @@ Item {
     Rectangle {
         id: altitudeLegend
         anchors.bottom: parent.bottom
-        anchors.right: parent.right
-        anchors.rightMargin: 32
+        anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottomMargin: 32
         width: 400
         height: 45
@@ -193,9 +192,9 @@ Item {
     Rectangle {
         id: flightListPanel
         anchors.right: parent.right
-        anchors.bottom: altitudeLegend.top
-        anchors.rightMargin: 32
-        anchors.bottomMargin: 16
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: 16
+        anchors.bottomMargin: 32
         width: 400
         height: 320
         color: Calcite.Calcite.foreground2
@@ -203,7 +202,7 @@ Item {
         border.width: 1
         radius: 8
         z: 12
-        visible: flightTracker.isAuthenticated
+        visible: flightTracker.isAuthenticated && flightTracker.visibleFlights && flightTracker.visibleFlights.length > 0
 
         ListView {
             id: flightListView
