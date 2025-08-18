@@ -31,7 +31,6 @@ ApplicationWindow {
     minimumWidth: 400
     minimumHeight: 300
 
-
     StackView {
         id: stack
         anchors.fill: parent
@@ -45,6 +44,25 @@ ApplicationWindow {
 
     Component {
         id: flightTrackerComponent
-        FlightTrackerForm {}
+        FlightTrackerForm {
+            onSwitchTo3DRequested: function(flightModel) {
+                // Check if the flightModel is valid and has the method
+                if (flightModel && typeof flightModel.getSelectedFlightData === "function") {
+                    var flightData = flightModel.getSelectedFlightData()
+                    stack.push(flight3DComponent, {"flightData": flightData, "flightTracker": flightModel})
+                } else {
+                    console.error("Invalid flight model or missing getSelectedFlightData method")
+                }
+            }
+        }
+    }
+
+    Component {
+        id: flight3DComponent
+        Flight3DView {
+            onBackTo2DRequested: {
+                stack.pop()
+            }
+        }
     }
 }

@@ -38,41 +38,36 @@ equals(QT_MAJOR_VERSION, 6) {
 	}
 }
 
-ARCGIS_RUNTIME_VERSION = 200.7.0
+ARCGIS_RUNTIME_VERSION = 200.8.0
 include($$PWD/arcgisruntime.pri)
 
-#Arcgis sdk toolkit hardcoding values for now
-# ArcGIS Toolkit - proper configuration
-TOOLKIT_PATH = $$ARCGIS_TOOLKIT_PATH
-isEmpty(TOOLKIT_PATH) {
-    # Try common locations
-    exists("C:/Program Files/ArcGIS SDKs/Qt/toolkit") {
-        TOOLKIT_PATH = "C:/Program Files/ArcGIS SDKs/Qt/toolkit"
-    } else:exists("D:/Qt/ArcGisSDK/arcgis-maps-sdk-toolkit-qt") {
-        TOOLKIT_PATH = "D:/Qt/ArcGisSDK/arcgis-maps-sdk-toolkit-qt"
-    }
-}
+# ArcGIS Toolkit configuration - using local cloned repository
+TOOLKIT_PATH = $$PWD/arcgis-maps-sdk-toolkit-qt
 
-!isEmpty(TOOLKIT_PATH) {
-    exists($$TOOLKIT_PATH) {
-        include($$TOOLKIT_PATH/uitools/toolkitcpp.pri)
-        RESOURCES += $$TOOLKIT_PATH/calcite/Calcite/calcite.qrc
-        DEFINES += TOOLKIT_AVAILABLE
-    } else {
-        warning("ArcGIS Toolkit not found at: $$TOOLKIT_PATH")
-    }
+exists($$TOOLKIT_PATH) {
+    include($$TOOLKIT_PATH/uitools/toolkitcpp/toolkitcpp.pri)
+    RESOURCES += $$TOOLKIT_PATH/calcite/Calcite/calcite.qrc
+    DEFINES += TOOLKIT_AVAILABLE
 } else {
-    warning("ARCGIS_TOOLKIT_PATH not set")
+    error("ArcGIS Toolkit not found at: $$TOOLKIT_PATH")
 }
-
-
 
 HEADERS += \
-    FlightTracker.h
+    FlightTracker.h \
+    FlightData.h \
+    OpenSkyAuthManager.h \
+    FlightDataService.h \
+    FlightRenderer.h \
+    Flight3DViewer.h
 
 SOURCES += \
-    main.cpp \
-    FlightTracker.cpp
+    FlightTracker.cpp \
+    FlightData.cpp \
+    OpenSkyAuthManager.cpp \
+    FlightDataService.cpp \
+    FlightRenderer.cpp \
+    Flight3DViewer.cpp \
+    main.cpp
 
 RESOURCES += \
     qml/qml.qrc \

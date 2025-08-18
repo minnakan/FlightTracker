@@ -1,100 +1,93 @@
-// Copyright 2025 ESRI
-//
-// All rights reserved under the copyright laws of the United States
-// and applicable international laws, treaties, and conventions.
-//
-// You may freely redistribute and use this sample code, with or
-// without modification, provided you include the original copyright
-// notice and use restrictions.
-//
-// See the Sample code usage restrictions document for further information.
-//
-
 #include "FlightTracker.h"
-
+#include "OpenSkyAuthManager.h"
+#include "FlightDataService.h"
+#include "FlightRenderer.h"
 #include "Map.h"
 #include "MapQuickView.h"
 #include "MapTypes.h"
-
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QNetworkRequest>
-#include <QUrlQuery>
-#include <QDebug>
-
 #include "GraphicsOverlay.h"
 #include "Graphic.h"
-#include "SymbolTypes.h"
-#include "TextSymbol.h"
-#include "Point.h"
-#include "SpatialReference.h"
 #include "GraphicListModel.h"
 #include "GraphicsOverlayListModel.h"
-#include "SimpleMarkerSymbol.h"
-#include "SimpleLineSymbol.h"
-
 #include "Popup.h"
 #include "PopupDefinition.h"
-#include "PopupField.h"
-#include "PopupDefinition.h"
 #include "TextPopupElement.h"
-
-#include "Polyline.h"
-#include "PolylineBuilder.h"
-
-#include <QLineF>
-#include <QDateTime>
-#include "Geometry.h"
-
+#include "Point.h"
+#include "SpatialReference.h"
+#include "GeoElement.h"
 #include <QFile>
-
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLineF>
+#include <QTimer>
+#include <QDebug>
 
 using namespace Esri::ArcGISRuntime;
 
-FlightTracker::FlightTracker(QObject *parent /* = nullptr */)
+FlightTracker::FlightTracker(QObject *parent)
     : QObject(parent)
     , m_map(new Map(BasemapStyle::ArcGISHumanGeographyDark, this))
-    , m_networkManager(new QNetworkAccessManager(this))
+    , m_authManager(new OpenSkyAuthManager(this))
+    , m_dataService(new FlightDataService(this))
+    , m_renderer(new FlightRenderer(this))
+    , m_flightOverlay(new GraphicsOverlay(this))
+    , m_selectionOverlay(new GraphicsOverlay(this))
+    , m_trackOverlay(new GraphicsOverlay(this))
+    , m_displayUpdateTimer(new QTimer(this))
+    , m_flightUpdateTimer(new QTimer(this))
+    , m_filterUpdateTimer(new QTimer(this))
 {
     loadConfig();
     loadCountryMappings();
-    authenticate();
-    m_flightUpdateTimer = new QTimer(this);
-
-    //Set to high value(~17 minutes) to prevent auto refresh for now; we can expose as a setting later
-    m_flightUpdateTimer->setInterval(1000000);
-    connect(m_flightUpdateTimer, &QTimer::timeout, this, &FlightTracker::fetchFlightData);
-
-    m_displayUpdateTimer = new QTimer(this);
-    m_displayUpdateTimer->setInterval(1000); // Update every second
+    
+    // Connect authentication signals
+    connect(m_authManager, &OpenSkyAuthManager::authenticationSuccess,
+            this, &FlightTracker::onAuthenticationSuccess);
+    connect(m_authManager, &OpenSkyAuthManager::authenticationFailed,
+            this, &FlightTracker::onAuthenticationFailed);
+    
+    // Connect data service signals
+    connect(m_dataService, &FlightDataService::flightDataReceived,
+            this, &FlightTracker::onFlightDataReceived);
+    connect(m_dataService, &FlightDataService::trackDataReceived,
+            this, &FlightTracker::onTrackDataReceived);
+    connect(m_dataService, &FlightDataService::dataFetchFailed,
+            this, &FlightTracker::onDataFetchFailed);
+    
+    // Setup timers
+    m_displayUpdateTimer->setInterval(1000);
     connect(m_displayUpdateTimer, &QTimer::timeout, this, &FlightTracker::updateDisplayTime);
     m_displayUpdateTimer->start();
-
-    m_flightOverlay = new GraphicsOverlay(this);
-    m_selectionOverlay = new GraphicsOverlay(this);
-    m_trackOverlay = new GraphicsOverlay(this);
+    
+    m_flightUpdateTimer->setInterval(60000); // 1 minute auto-refresh
+    connect(m_flightUpdateTimer, &QTimer::timeout, this, &FlightTracker::fetchFlightData);
+    
+    // Setup filter debounce timer
+    m_filterUpdateTimer->setSingleShot(true);
+    m_filterUpdateTimer->setInterval(150); // 150ms debounce
+    connect(m_filterUpdateTimer, &QTimer::timeout, this, &FlightTracker::applyFilters);
+    
+    // Start authentication
+    m_authManager->authenticate();
 }
-
 
 FlightTracker::~FlightTracker() = default;
 
 void FlightTracker::loadConfig()
 {
-    QFile configFile(":/config/Config/config.json"); // adjust accordingly
+    QFile configFile(":/config/Config/config.json");
     if (configFile.open(QIODevice::ReadOnly)) {
         QJsonDocument doc = QJsonDocument::fromJson(configFile.readAll());
         QJsonObject config = doc.object();
-
-        // Load OpenSky API credentials
         QJsonObject opensky = config["opensky"].toObject();
-        m_clientId = opensky["client_id"].toString();
-        m_clientSecret = opensky["client_secret"].toString();
-
+        
+        QString clientId = opensky["client_id"].toString();
+        QString clientSecret = opensky["client_secret"].toString();
+        
+        m_authManager->setCredentials(clientId, clientSecret);
         qDebug() << "OpenSky credentials loaded from config.json";
     } else {
-        qDebug() << "Could not open config.json, using hardcoded values";
-        // Fallback to your current hardcoded values
+        qWarning() << "Could not open config.json - OpenSky credentials are required";
     }
 }
 
@@ -103,7 +96,6 @@ MapQuickView *FlightTracker::mapView() const
     return m_mapView;
 }
 
-// Set the view (created in QML)
 void FlightTracker::setMapView(MapQuickView *mapView)
 {
     if (!mapView || mapView == m_mapView) {
@@ -113,6 +105,7 @@ void FlightTracker::setMapView(MapQuickView *mapView)
     m_mapView = mapView;
     m_mapView->setMap(m_map);
 
+    // Add overlays in correct order
     m_mapView->graphicsOverlays()->append(m_trackOverlay);
     m_mapView->graphicsOverlays()->append(m_flightOverlay);
     m_mapView->graphicsOverlays()->append(m_selectionOverlay);
@@ -120,588 +113,297 @@ void FlightTracker::setMapView(MapQuickView *mapView)
     emit mapViewChanged();
 }
 
-void FlightTracker::authenticate()
+bool FlightTracker::isAuthenticated() const
 {
-    qDebug() << "Starting OpenSky Network authentication...";
-    requestAccessToken();
+    return m_authManager->isAuthenticated();
 }
 
-void FlightTracker::requestAccessToken()
+bool FlightTracker::hasSelectedFlight() const
 {
-    // OpenSky Network OAuth2 token endpoint
-    QUrl tokenUrl("https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token");
-
-    QNetworkRequest request(tokenUrl);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-
-    // Prepare POST data for client credentials flow
-    QUrlQuery postData;
-    postData.addQueryItem("grant_type", "client_credentials");
-    postData.addQueryItem("client_id", m_clientId);
-    postData.addQueryItem("client_secret", m_clientSecret);
-
-    QNetworkReply *reply = m_networkManager->post(request, postData.toString(QUrl::FullyEncoded).toUtf8());
-
-    connect(reply, &QNetworkReply::finished, this, &FlightTracker::onAuthenticationReply);
+    return m_selectedFlight.isValid();
 }
 
-void FlightTracker::onAuthenticationReply()
+void FlightTracker::setShowTrack(bool show)
 {
-    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
-        return;
-    }
-
-    reply->deleteLater();
-
-    if (reply->error() != QNetworkReply::NoError) {
-        QString error = QString("Authentication failed: %1").arg(reply->errorString());
-        qDebug() << error;
-        emit authenticationFailed(error);
-        return;
-    }
-
-    // Parse JSON response
-    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-    QJsonObject obj = doc.object();
-
-    if (obj.contains("access_token")) {
-        m_accessToken = obj["access_token"].toString();
-        qDebug() << "Authentication successful! Token obtained.";
-        emit authenticationSuccess();
-        emit authenticationChanged();
-
-        // Start fetching flight data
-        fetchFlightData();
-        m_flightUpdateTimer->start();
-
-    } else {
-        QString error = "No access token in response";
-        if (obj.contains("error")) {
-            error = obj["error"].toString();
-            if (obj.contains("error_description")) {
-                error += ": " + obj["error_description"].toString();
-            }
+    if (m_showTrack != show) {
+        m_showTrack = show;
+        emit showTrackChanged();
+        
+        if (m_showTrack && m_selectedFlight.isValid()) {
+            m_dataService->fetchFlightTrack(m_selectedFlight.icao24());
+        } else if (!m_showTrack) {
+            m_trackOverlay->graphics()->clear();
         }
-        qDebug() << "Authentication failed:" << error;
-        emit authenticationFailed(error);
     }
 }
 
 void FlightTracker::fetchFlightData()
 {
-    if (m_accessToken.isEmpty()) {
-        qDebug() << "No access token available for flight data request";
+    if (!isAuthenticated()) {
+        qDebug() << "Not authenticated, cannot fetch flight data";
         return;
     }
-
-
-    if (m_selectedIcao24.isEmpty()) {
-        clearFlightSelection();
-    }
-    m_selectedGraphic = nullptr;
-
-    qDebug() << "Fetching all flight data...";
-
-
-    QUrl flightUrl("https://opensky-network.org/api/states/all");
-    QNetworkRequest request(flightUrl);
-    request.setRawHeader("Authorization", QString("Bearer %1").arg(m_accessToken).toUtf8());
-
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, &FlightTracker::onFlightDataReply);
-}
-
-QColor FlightTracker::getAltitudeColor(double altitude)
-{
-    // Convert meters to feet if needed (OpenSky uses meters)
-    double altitudeFeet = altitude * 3.28084;
-
-    // Define altitude ranges and colors
-    if (altitudeFeet <= 500) {
-        return QColor(255, 69, 0);      // Red-orange (very low)
-    } else if (altitudeFeet <= 1000) {
-        return QColor(255, 140, 0);     // Orange
-    } else if (altitudeFeet <= 2000) {
-        return QColor(255, 215, 0);     // Gold
-    } else if (altitudeFeet <= 4000) {
-        return QColor(255, 255, 0);     // Yellow
-    } else if (altitudeFeet <= 6000) {
-        return QColor(173, 255, 47);    // Yellow-green
-    } else if (altitudeFeet <= 8000) {
-        return QColor(0, 255, 0);       // Green
-    } else if (altitudeFeet <= 10000) {
-        return QColor(0, 255, 127);     // Spring green
-    } else if (altitudeFeet <= 20000) {
-        return QColor(0, 191, 255);     // Deep sky blue
-    } else if (altitudeFeet <= 30000) {
-        return QColor(0, 100, 255);     // Blue
-    } else if (altitudeFeet <= 40000) {
-        return QColor(138, 43, 226);    // Blue violet
-    } else {
-        return QColor(128, 0, 128);     // Purple (very high)
-    }
-}
-
-int FlightTracker::getCategoryFromCallsign(const QString& callsign)
-{
-    if (callsign.isEmpty()) {
-        return 1;  // No information
-    }
-
-    QString trimmed = callsign.trimmed();
-    int length = trimmed.length();
-
-    // Count digits and letters
-    int digitCount = 0;
-    int letterCount = 0;
-    for (QChar c : trimmed) {
-        if (c.isDigit()) digitCount++;
-        if (c.isLetter()) letterCount++;
-    }
-
-    // US N-number pattern
-    if (trimmed.startsWith('N') && digitCount >= 2) {
-        return 2;  // Light aircraft
-    }
-
-    // Cargo indicators
-    if (trimmed.contains("FDX") || trimmed.contains("UPS") ||
-        trimmed.contains("CARGO") || trimmed.contains("ABX")) {
-        return 6;  // Heavy cargo
-    }
-
-    // Emergency/helicopter indicators
-    if (trimmed.contains("MED") || trimmed.contains("RESCUE") ||
-        trimmed.contains("LIFE") || trimmed.contains("HELI")) {
-        return 8;  // Rotorcraft
-    }
-
-    // Statistical categorization based on length and composition
-    if (length <= 5) {
-        return 3;  // Short = likely private/light
-    } else if (length == 6 || length == 7) {
-        if (digitCount >= 2) {
-            return 4;  // Commercial flight number pattern
-        } else {
-            return 4;  // Regional or small commercial
-        }
-    } else if (length >= 8) {
-        return 3;  // Long codes often indicate private aircraft
-    }
-
-    // Default
-    return 4;  // Small aircraft
-}
-
-TextSymbol* FlightTracker::getSymbolForCategory(int category, bool onGround, double altitude)
-{
-    QString aircraftChar;
-    float fontSize = 24.0f;
-
-    // Map category to basic Unicode symbols that work everywhere
-    switch (category) {
-    case 1:  aircraftChar = "✈"; fontSize = 24.0f; break;  // Unknown
-    case 2:  aircraftChar = "✈"; fontSize = 12.0f; break;  // Light aircraft - U+2708
-    case 3:  aircraftChar = "✈"; fontSize = 16.0f; break;  // Small aircraft - U+2708
-    case 4:  aircraftChar = "✈"; fontSize = 20.0f; break;  // Large aircraft - U+2708
-    case 5:  aircraftChar = "✈"; fontSize = 22.0f; break;  // High Vortex Large - U+2708
-    case 6:  aircraftChar = "✈"; fontSize = 26.0f; break;  // Heavy aircraft - U+2708
-    case 7:  aircraftChar = "▲"; fontSize = 22.0f; break;  // High Performance - triangle
-    case 8:  aircraftChar = "●"; fontSize = 20.0f; break;  // Rotorcraft - circle
-    case 9:  aircraftChar = "◇"; fontSize = 18.0f; break;  // Glider - diamond
-    case 10: aircraftChar = "○"; fontSize = 26.0f; break;  // Lighter-than-air - circle
-    case 11: aircraftChar = "·"; fontSize = 12.0f; break;  // Parachutist - dot
-    case 12: aircraftChar = "△"; fontSize = 14.0f; break;  // Ultralight - triangle
-    case 13: aircraftChar = "✈"; fontSize = 16.0f; break;  // Reserved
-    case 14: aircraftChar = "◆"; fontSize = 12.0f; break;  // UAV - diamond
-    case 15: aircraftChar = "▲"; fontSize = 26.0f; break;  // Space vehicle - triangle
-    case 16: aircraftChar = "■"; fontSize = 18.0f; break;  // Emergency Vehicle - square
-    case 17: aircraftChar = "▪"; fontSize = 16.0f; break;  // Service Vehicle - small square
-    case 18: aircraftChar = "!"; fontSize = 10.0f; break;  // Point Obstacle
-    case 19: aircraftChar = "⚠"; fontSize = 14.0f; break;  // Cluster Obstacle - warning
-    case 20: aircraftChar = "⚠"; fontSize = 12.0f; break;  // Line Obstacle - warning
-    default: aircraftChar = "✈"; fontSize = 24.0f; break;  // Default - airplane
-    }
-
-    // Special handling for ground vehicles
-    if (onGround && (category == 16 || category == 17)) {
-        aircraftChar = "■";    // Square for ground vehicle
-        fontSize = 20.0f;
-    }
-
-    // Get altitude-based color
-    QColor altitudeColor = getAltitudeColor(altitude);
-
-    // Create text symbol
-    TextSymbol* symbol = new TextSymbol(aircraftChar,
-                                        altitudeColor,
-                                        fontSize,
-                                        HorizontalAlignment::Center,
-                                        VerticalAlignment::Middle,
-                                        this);
-
-    symbol->setFontFamily("Arial Unicode MS");
-
-
-    return symbol;
-}
-
-void FlightTracker::onFlightDataReply()
-{
-    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
-        return;
-    }
-
-    reply->deleteLater();
-
-    if (reply->error() != QNetworkReply::NoError) {
-        qDebug() << "Flight data request failed:" << reply->errorString();
-        return;
-    }
-
-    QByteArray data = reply->readAll();
-    qDebug() << "Flight data received, size:" << data.size() << "bytes";
-
-    m_lastUpdateDateTime = QDateTime::currentDateTime();
-    updateDisplayTime();
-
-    m_flightOverlay->graphics()->clear();
-    m_flightDataCache.clear();
-
-    QSet<QString> allCountries;
-
-    // Parse JSON response
-    QJsonDocument doc = QJsonDocument::fromJson(data);
-    QJsonObject obj = doc.object();
-
-
-    if (obj.contains("states")) {
-        QJsonArray states = obj["states"].toArray();
-        qDebug() << "Adding" << states.size() << "flights to map";
-
-        //for persistant selection
-        Graphic* graphicToSelect = nullptr;
-        QJsonArray flightDataToSelect;
-
-        for (const QJsonValue& value : std::as_const(states)) {
-            QJsonArray flight = value.toArray();
-            if (flight.size() >= 17) {
-
-                QString country = extractCountryFromFlight(flight);
-                if (!country.isEmpty()) {
-                    allCountries.insert(country);
-                }
-
-                // Extract flight data
-                QString callsign = flight[1].toString().trimmed();
-                double longitude = flight[5].toDouble();
-                double latitude = flight[6].toDouble();
-                double altitude = flight[7].toDouble();        // Add altitude
-                bool onGround = flight[8].toBool();
-                double heading = flight[10].toDouble();
-
-                // Skip flights with invalid coordinates
-                if (longitude == 0.0 && latitude == 0.0) continue;
-
-                QString cacheKey = QString::number(m_flightOverlay->graphics()->size());
-                m_flightDataCache[cacheKey] = flight;
-
-                // Skip if heading is null/invalid
-                if (std::isnan(heading)) {
-                    heading = 0.0;
-                }
-
-                //for persistant selection
-                if (!m_selectedIcao24.isEmpty() && flight[0].toString() == m_selectedIcao24) {
-                    flightDataToSelect = flight;
-                }
-
-                // Get category from callsign
-                int category = getCategoryFromCallsign(callsign);
-
-                // Get the configured symbol with altitude-based coloring
-                TextSymbol* symbol = getSymbolForCategory(category, onGround, altitude);
-
-
-                double adjustedHeading = heading - 45.0;
-
-                // Ensure the angle stays within 0-360 range
-                if (adjustedHeading < 0) {
-                    adjustedHeading += 360.0;
-                }
-
-                // Set the rotation angle
-                symbol->setAngle(adjustedHeading);
-
-                Point flightPoint(longitude, latitude, SpatialReference::wgs84());
-                Graphic* flightGraphic = new Graphic(flightPoint, symbol, this);
-
-                //for persistant selection
-                if (!flightDataToSelect.isEmpty() && flightDataToSelect == flight) {
-                    graphicToSelect = flightGraphic;
-                }
-
-                m_flightOverlay->graphics()->append(flightGraphic);
-            }
-        }
-
-        // organize into continents
-        QVariantMap continentCountries = {
-            {"Africa", QStringList()}, {"Asia", QStringList()}, {"Europe", QStringList()},
-            {"North America", QStringList()}, {"Oceania", QStringList()},
-            {"South America", QStringList()}, {"Other", QStringList()}
-        };
-
-        for (const QString& country : allCountries) {
-            QString continent = getCountryContinent(country);
-            QStringList currentList = continentCountries[continent].toStringList();
-            currentList.append(country);
-            continentCountries[continent] = currentList;
-        }
-
-        // Remove empty continents and sort
-        QVariantMap finalData;
-        for (auto it = continentCountries.begin(); it != continentCountries.end(); ++it) {
-            QStringList countries = it.value().toStringList();
-            if (!countries.isEmpty()) {
-                countries.sort();
-                finalData[it.key()] = countries;
-            }
-        }
-
-        m_availableCountries = finalData;
-        emit availableCountriesChanged();
-
-        if (m_isInitialLoad) {
-            QStringList allCountries;
-            for (auto it = finalData.begin(); it != finalData.end(); ++it) {
-                QStringList countries = it.value().toStringList();
-                allCountries.append(countries);
-            }
-            setSelectedCountries(allCountries);
-            m_isInitialLoad = false;
-        } else {
-            // On subsequent updates, apply the current filter to new data
-            applyFilters();
-        }
-
-        //Restore selection
-        if (graphicToSelect && !flightDataToSelect.isEmpty()) {
-            m_selectedGraphic = graphicToSelect;
-            createFlightPopup(m_selectedGraphic, flightDataToSelect);
-            updateSelectionGraphic();
-            if (m_showTrack) {
-                fetchFlightTrack(m_selectedIcao24);
-            }
-        }
-    }
+    
+    clearFlightSelection();
+    m_dataService->fetchFlightData();
 }
 
 void FlightTracker::selectFlightAtPoint(QPointF screenPoint)
 {
-    if (!m_mapView || !m_flightOverlay) {
-        return;
-    }
-
-    // Store the currently found flight (if any)
-    Graphic* foundGraphic = nullptr;
-    QJsonArray foundFlightData;
-
-    // Manual hit testing approach using coordinate recreation
-    GraphicListModel* graphics = m_flightOverlay->graphics();
-    constexpr double tolerancePixels = 15.0;
-
-    for (int i = 0; i < graphics->size(); ++i) {
-        Graphic* graphic = graphics->at(i);
-        if (!graphic) continue;
-
-        // Skip hidden flights - only allow selection of visible flights
-        if (!graphic->isVisible()) {
-            continue;
+    FlightData flight = findFlightAtPoint(screenPoint);
+    
+    if (flight.isValid() && !(flight.icao24() == m_selectedFlight.icao24())) {
+        m_selectedFlight = flight;
+        createFlightPopup(flight);
+        m_renderer->createSelectionGraphic(m_selectionOverlay, flight);
+        
+        if (m_showTrack) {
+            m_dataService->fetchFlightTrack(flight.icao24());
         }
-
-        // Get flight data from cache to recreate the point
-        QString cacheKey = QString::number(i);
-        if (m_flightDataCache.contains(cacheKey)) {
-            QJsonArray flightData = m_flightDataCache[cacheKey];
-
-            // Extract coordinates from cached data
-            double longitude = flightData[5].toDouble();
-            double latitude = flightData[6].toDouble();
-
-            // Skip invalid coordinates
-            if (longitude == 0.0 && latitude == 0.0) continue;
-
-            // Create a point and convert to screen coordinates
-            Point flightPoint(longitude, latitude, SpatialReference::wgs84());
-            QPointF flightScreen = m_mapView->locationToScreen(flightPoint);
-
-            // Calculate screen distance
-            double distance = QLineF(screenPoint, flightScreen).length();
-
-            if (distance <= tolerancePixels) {
-                foundGraphic = graphic;
-                foundFlightData = flightData;
-                qDebug() << "Flight found at index:" << i << "distance:" << distance;
-                break; // Found one, stop searching
-            }
-        }
-    }
-
-    // Now handle the selection based on what we found
-    if (foundGraphic) {
-        // Only update if it's a different flight
-        if (m_selectedGraphic != foundGraphic) {
-            // Clear previous popup without affecting the selection state
-            if (m_selectedFlightPopup) {
-                Popup* oldPopup = m_selectedFlightPopup;
-                m_selectedFlightPopup = nullptr;
-                QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
-            }
-
-            // Set new selection
-            m_selectedGraphic = foundGraphic;
-            m_selectedIcao24 = foundFlightData[0].toString();
-            createFlightPopup(foundGraphic, foundFlightData);
-            updateSelectionGraphic();
-
-            if (m_showTrack) {
-                fetchFlightTrack(m_selectedIcao24);
-            }
-        }
-    } else {
-        // do this to close popup on clicking elsewhere
-        //clearFlightSelection();
+        
+        emit selectedFlightChanged();
     }
 }
 
 void FlightTracker::clearFlightSelection()
 {
-    m_selectedFlightTitle.clear();
-    m_selectedFlightInfo.clear();
-    m_selectedIcao24.clear();
-
-    // Emit signal BEFORE clearing the popup - application closes if we emit after :)
-    emit selectedFlightChanged();
-
-    // Now clear the rest
-    m_selectedGraphic = nullptr;
-
-    if (m_selectedFlightPopup) {
-        Popup* oldPopup = m_selectedFlightPopup;
-        m_selectedFlightPopup = nullptr;
-        QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
+    try {
+        // Clear the flight data first
+        m_selectedFlight = FlightData();
+        
+        // CRITICAL: Emit signal BEFORE clearing popup
+        emit selectedFlightChanged();
+        
+        // Now safely handle popup deletion
+        if (m_selectedFlightPopup) {
+            Popup* oldPopup = m_selectedFlightPopup;
+            m_selectedFlightPopup = nullptr;
+            QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
+        }
+        
+        // Clear overlays safely
+        if (m_selectionOverlay && m_selectionOverlay->graphics()) {
+            m_selectionOverlay->graphics()->clear();
+        }
+        
+        if (m_trackOverlay && m_trackOverlay->graphics()) {
+            m_trackOverlay->graphics()->clear();
+        }
+        
+    } catch (...) {
+        qDebug() << "Exception in clearFlightSelection";
     }
-    m_selectionOverlay->graphics()->clear();
-    clearTrackGraphics();
 }
 
-void FlightTracker::createFlightPopup(Esri::ArcGISRuntime::Graphic* flightGraphic, const QJsonArray& flightData)
+QVariantList FlightTracker::getSelectedFlightData()
 {
-    if (!flightGraphic || flightData.isEmpty())
+    QVariantList result;
+    if (m_selectedFlight.isValid()) {
+        result << m_selectedFlight.icao24() << m_selectedFlight.callsign() 
+               << m_selectedFlight.country() << "" << "" 
+               << m_selectedFlight.longitude() << m_selectedFlight.latitude()
+               << m_selectedFlight.altitude() << m_selectedFlight.onGround()
+               << m_selectedFlight.velocity() << m_selectedFlight.heading()
+               << m_selectedFlight.verticalRate() << "" << "" << m_selectedFlight.squawk();
+    }
+    return result;
+}
+
+Popup* FlightTracker::selectedFlightPopup() const
+{
+    // Return popup only if it's still valid and hasn't been marked for deletion
+    return m_selectedFlightPopup;
+}
+
+void FlightTracker::setSelectedCountries(const QStringList& countries)
+{
+    if (m_selectedCountries != countries) {
+        m_selectedCountries = countries;
+        emit selectedCountriesChanged();
+        scheduleFilterUpdate();
+    }
+}
+
+void FlightTracker::setSelectedFlightStatus(const QString& status)
+{
+    if (m_selectedFlightStatus != status) {
+        m_selectedFlightStatus = status;
+        emit selectedFlightStatusChanged();
+        scheduleFilterUpdate();
+    }
+}
+
+void FlightTracker::setMinAltitudeFilter(double minAlt)
+{
+    if (m_minAltitudeFilter != minAlt) {
+        m_minAltitudeFilter = minAlt;
+        emit altitudeFilterChanged();
+        scheduleFilterUpdate();
+    }
+}
+
+void FlightTracker::setMaxAltitudeFilter(double maxAlt)
+{
+    if (m_maxAltitudeFilter != maxAlt) {
+        m_maxAltitudeFilter = maxAlt;
+        emit altitudeFilterChanged();
+        scheduleFilterUpdate();
+    }
+}
+
+void FlightTracker::setMinSpeedFilter(double minSpeed)
+{
+    if (m_minSpeedFilter != minSpeed) {
+        m_minSpeedFilter = minSpeed;
+        emit speedFilterChanged();
+        scheduleFilterUpdate();
+    }
+}
+
+void FlightTracker::setMaxSpeedFilter(double maxSpeed)
+{
+    if (m_maxSpeedFilter != maxSpeed) {
+        m_maxSpeedFilter = maxSpeed;
+        emit speedFilterChanged();
+        scheduleFilterUpdate();
+    }
+}
+
+void FlightTracker::setSelectedVerticalStatus(const QString& status)
+{
+    if (m_selectedVerticalStatus != status) {
+        m_selectedVerticalStatus = status;
+        emit selectedVerticalStatusChanged();
+        scheduleFilterUpdate();
+    }
+}
+
+void FlightTracker::onAuthenticationSuccess()
+{
+    m_dataService->setAccessToken(m_authManager->accessToken());
+    emit authenticationSuccess();
+    emit authenticationChanged();
+    
+    fetchFlightData();
+    m_flightUpdateTimer->start();
+}
+
+void FlightTracker::onAuthenticationFailed(const QString& error)
+{
+    emit authenticationFailed(error);
+}
+
+void FlightTracker::onFlightDataReceived(const QList<FlightData>& flights)
+{
+    if (m_isUpdatingFlights) {
         return;
-
-    // Clear previous popup safely
-    if (m_selectedFlightPopup) {
-        Popup* oldPopup = m_selectedFlightPopup;
-        m_selectedFlightPopup = nullptr;
-        QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
     }
-
-    // Extract flight information
-    QString icao24 = flightData[0].toString();
-    QString callsign = flightData[1].toString().trimmed();
-    QString country = flightData[2].toString();
-    double longitude = flightData[5].toDouble();
-    double latitude = flightData[6].toDouble();
-    double altitude = flightData[7].toDouble();
-    bool onGround = flightData[8].toBool();
-    double velocity = flightData[9].toDouble();
-    double heading = flightData[10].toDouble();
-    double verticalRate = flightData[11].toDouble();
-    QString squawk = flightData[14].toString();
-
-    // Set title
-    QString title = callsign.isEmpty() ? QString("Flight %1").arg(icao24.left(6)) : callsign;
-
-    // Create popup definition
-    PopupDefinition* popupDef = new PopupDefinition(this);
-    popupDef->setTitle(title);
-
-    // Build the HTML content with white/off-white text colors
-    QString htmlContent = "<div style='font-family: Arial, sans-serif; color: #FFFFFF; background-color: transparent;'>";
-    htmlContent += "<table style='border-collapse: collapse; width: 100%; color: #FFFFFF;'>";
-
-    auto addRow = [&](const QString& label, const QString& value) {
-        // Use white text and light gray borders for dark theme
-        htmlContent += QString("<tr><td style='padding: 4px; border-bottom: 1px solid #4A4A4A; font-weight: bold; width: 40%; color: #F8F8F8;'>%1:</td>")
-                           .arg(label);
-        htmlContent += QString("<td style='padding: 4px; border-bottom: 1px solid #4A4A4A; color: #FFFFFF;'>%2</td></tr>")
-                           .arg(value);
-    };
-
-    addRow("ICAO24", icao24);
-    addRow("Callsign", callsign.isEmpty() ? "Unknown" : callsign);
-    addRow("Country", country.isEmpty() ? "Unknown" : country);
-    addRow("Status", onGround ? "On Ground" : "Airborne");
-    addRow("Position", QString("%1°, %2°").arg(latitude, 0, 'f', 6).arg(longitude, 0, 'f', 6));
-
-    if (altitude > 0) {
-        addRow("Altitude", QString("%1 m (%2 ft)")
-                   .arg(altitude, 0, 'f', 0)
-                   .arg(altitude * 3.28084, 0, 'f', 0));
-    } else {
-        addRow("Altitude", "Unknown");
+    
+    m_isUpdatingFlights = true;
+    
+    try {
+        // Clear selection first to avoid dangling references
+        if (m_selectedFlight.isValid()) {
+            clearFlightSelection();
+        }
+        
+        m_flights = flights;
+        m_lastUpdateDateTime = QDateTime::currentDateTime();
+        updateDisplayTime();
+        
+        if (!m_renderer || !m_flightOverlay) {
+            m_isUpdatingFlights = false;
+            return;
+        }
+        
+        // Clear existing graphics first
+        m_flightOverlay->graphics()->clear();
+        
+        // Update graphics after a brief delay to ensure UI is ready
+        QTimer::singleShot(50, this, [this, flights]() {
+            try {
+                m_renderer->updateFlightGraphics(m_flightOverlay, flights);
+                m_isUpdatingFlights = false;
+            } catch (...) {
+                qDebug() << "Exception updating flight graphics";
+                m_isUpdatingFlights = false;
+            }
+        });
+        
+    } catch (...) {
+        qDebug() << "Exception in onFlightDataReceived";
+        m_isUpdatingFlights = false;
+        return;
     }
-
-    if (velocity > 0) {
-        addRow("Speed", QString("%1 m/s (%2 knots)")
-                   .arg(velocity, 0, 'f', 1)
-                   .arg(velocity * 1.94384, 0, 'f', 1));
-    } else {
-        addRow("Speed", "Unknown");
+    
+    // Process countries and update available countries on initial load
+    if (m_isInitialLoad) {
+        QMap<QString, QStringList> continentsWithCountries;
+        QSet<QString> uniqueCountries;
+        
+        for (const FlightData& flight : flights) {
+            QString country = extractCountryFromFlight(flight);
+            if (!country.isEmpty() && !uniqueCountries.contains(country)) {
+                uniqueCountries.insert(country);
+                QString continent = getCountryContinent(country);
+                continentsWithCountries[continent].append(country);
+            }
+        }
+        
+        // Sort countries within each continent
+        for (auto& countries : continentsWithCountries) {
+            std::sort(countries.begin(), countries.end());
+        }
+        
+        // Convert to QVariantMap for QML
+        QVariantMap availableCountries;
+        for (auto it = continentsWithCountries.begin(); it != continentsWithCountries.end(); ++it) {
+            availableCountries[it.key()] = QVariant::fromValue(it.value());
+        }
+        
+        m_availableCountries = availableCountries;
+        
+        // Initialize selected countries to all countries
+        QStringList allCountries = uniqueCountries.values();
+        std::sort(allCountries.begin(), allCountries.end());
+        m_selectedCountries = allCountries;
+        
+        m_isInitialLoad = false;
+        
+        emit availableCountriesChanged();
+        emit selectedCountriesChanged();
+        
+        qDebug() << "Populated" << uniqueCountries.size() << "countries";
     }
-
-    if (!std::isnan(heading)) {
-        addRow("Heading", QString("%1°").arg(heading, 0, 'f', 0));
-    } else {
-        addRow("Heading", "Unknown");
+    
+    // Restore selection if possible
+    if (m_selectedFlight.isValid()) {
+        for (const FlightData& flight : flights) {
+            if (flight.icao24() == m_selectedFlight.icao24()) {
+                m_selectedFlight = flight;
+                createFlightPopup(flight);
+                m_renderer->createSelectionGraphic(m_selectionOverlay, flight);
+                break;
+            }
+        }
     }
+    
+    // Apply current filters using debounced approach
+    scheduleFilterUpdate();
+    
+    qDebug() << "Updated" << flights.size() << "flights on map";
+}
 
-    if (!std::isnan(verticalRate)) {
-        QString verticalRateStr = verticalRate > 0 ? "Climbing" : (verticalRate < 0 ? "Descending" : "Level");
-        addRow("Vertical Rate", QString("%1 m/s (%2)")
-                                    .arg(verticalRate, 0, 'f', 1)
-                                    .arg(verticalRateStr));
-    } else {
-        addRow("Vertical Rate", "Unknown");
+void FlightTracker::onTrackDataReceived(const QString& icao24, const QJsonObject& trackData)
+{
+    if (m_selectedFlight.isValid() && m_selectedFlight.icao24() == icao24) {
+        m_renderer->drawFlightTrack(m_trackOverlay, trackData);
     }
+}
 
-    if (!squawk.isEmpty()) {
-        addRow("Squawk", squawk);
-    }
-
-    htmlContent += "</table></div>";
-
-    // Create TextPopupElement with the content and parent
-    TextPopupElement* textElement = new TextPopupElement(htmlContent, this);
-
-    // Add the text element to the popup definition
-    QList<PopupElement*> elements;
-    elements.append(textElement);
-    popupDef->setElements(elements);
-
-    // Create popup from the graphic
-    m_selectedFlightPopup = new Popup(flightGraphic, popupDef, this);
-
-    // Set the string properties for QML compatibility
-    m_selectedFlightTitle = title;
-    m_selectedFlightInfo = QString("Flight information for %1").arg(title);
-
-    emit selectedFlightChanged();
-    qDebug() << "Popup created successfully for flight:" << callsign;
+void FlightTracker::onDataFetchFailed(const QString& error)
+{
+    qWarning() << "Data fetch failed:" << error;
 }
 
 void FlightTracker::updateDisplayTime()
@@ -710,24 +412,134 @@ void FlightTracker::updateDisplayTime()
         m_lastUpdateTime = "Never";
     } else {
         qint64 secondsAgo = m_lastUpdateDateTime.secsTo(QDateTime::currentDateTime());
-
+        
         if (secondsAgo < 60) {
             m_lastUpdateTime = secondsAgo <= 5 ? "Just now" : QString("%1s ago").arg(secondsAgo);
         } else if (secondsAgo < 3600) {
-            int minutesAgo = secondsAgo / 60;
-            m_lastUpdateTime = QString("%1m ago").arg(minutesAgo);
+            m_lastUpdateTime = QString("%1m ago").arg(secondsAgo / 60);
         } else {
-            int hoursAgo = secondsAgo / 3600;
-            m_lastUpdateTime = QString("%1h ago").arg(hoursAgo);
+            m_lastUpdateTime = QString("%1h ago").arg(secondsAgo / 3600);
         }
     }
-
+    
     emit lastUpdateTimeChanged();
+}
+
+FlightData FlightTracker::findFlightAtPoint(QPointF screenPoint)
+{
+    if (!m_mapView || m_flights.isEmpty()) {
+        return FlightData();
+    }
+
+    constexpr double tolerancePixels = 15.0;
+    GraphicListModel* graphics = m_flightOverlay->graphics();
+    
+    for (int i = 0; i < graphics->size() && i < m_flights.size(); ++i) {
+        Graphic* graphic = graphics->at(i);
+        if (!graphic || !graphic->isVisible()) continue;
+        
+        const FlightData& flight = m_flights[i];
+        Point flightPoint(flight.longitude(), flight.latitude(), SpatialReference::wgs84());
+        QPointF flightScreen = m_mapView->locationToScreen(flightPoint);
+        
+        double distance = QLineF(screenPoint, flightScreen).length();
+        if (distance <= tolerancePixels) {
+            return flight;
+        }
+    }
+    
+    return FlightData();
+}
+
+void FlightTracker::createFlightPopup(const FlightData& flight)
+{
+    qDebug() << "Creating flight popup for" << flight.icao24();
+    
+    try {
+        // Clear previous popup safely (matching old implementation)
+        if (m_selectedFlightPopup) {
+            qDebug() << "Cleaning up existing popup";
+            Popup* oldPopup = m_selectedFlightPopup;
+            m_selectedFlightPopup = nullptr;
+            QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
+        }
+
+    QString title = flight.callsign().isEmpty() ? 
+                   QString("Flight %1").arg(flight.icao24().left(6)) : flight.callsign();
+
+    PopupDefinition* popupDef = new PopupDefinition(this);
+    popupDef->setTitle(title);
+
+    QString htmlContent = "<div style='font-family: Arial, sans-serif; color: #FFFFFF;'>";
+    htmlContent += "<table style='border-collapse: collapse; width: 100%; color: #FFFFFF;'>";
+
+    auto addRow = [&](const QString& label, const QString& value) {
+        htmlContent += QString("<tr><td style='padding: 4px; border-bottom: 1px solid #4A4A4A; font-weight: bold; color: #F8F8F8;'>%1:</td>").arg(label);
+        htmlContent += QString("<td style='padding: 4px; border-bottom: 1px solid #4A4A4A; color: #FFFFFF;'>%2</td></tr>").arg(value);
+    };
+
+    addRow("ICAO24", flight.icao24());
+    addRow("Callsign", flight.callsign().isEmpty() ? "Unknown" : flight.callsign());
+    addRow("Country", flight.country().isEmpty() ? "Unknown" : flight.country());
+    addRow("Status", flight.onGround() ? "On Ground" : "Airborne");
+    addRow("Position", QString("%1°, %2°").arg(flight.latitude(), 0, 'f', 6).arg(flight.longitude(), 0, 'f', 6));
+    
+    if (flight.altitude() > 0) {
+        addRow("Altitude", QString("%1 m (%2 ft)")
+                   .arg(flight.altitude(), 0, 'f', 0)
+                   .arg(flight.altitude() * 3.28084, 0, 'f', 0));
+    }
+    
+    if (flight.velocity() > 0) {
+        addRow("Speed", QString("%1 m/s (%2 knots)")
+                   .arg(flight.velocity(), 0, 'f', 1)
+                   .arg(flight.velocity() * 1.94384, 0, 'f', 1));
+    }
+
+    htmlContent += "</table></div>";
+
+    TextPopupElement* textElement = new TextPopupElement(htmlContent, this);
+    QList<PopupElement*> elements;
+    elements.append(textElement);
+    popupDef->setElements(elements);
+
+        // Use the existing graphic from the overlay instead of creating a new one
+        // This matches the old implementation pattern
+        GraphicListModel* graphics = m_flightOverlay->graphics();
+        Graphic* flightGraphic = nullptr;
+        
+        // Find the graphic for this flight
+        for (int i = 0; i < graphics->size() && i < m_flights.size(); ++i) {
+            const FlightData& flightData = m_flights[i];
+            if (flightData.icao24() == flight.icao24()) {
+                flightGraphic = graphics->at(i);
+                break;
+            }
+        }
+        
+        if (!flightGraphic) {
+            qDebug() << "Failed to find graphic for popup";
+            return;
+        }
+        
+        // Create popup from the existing graphic (like old implementation)
+        m_selectedFlightPopup = new Popup(flightGraphic, popupDef, this);
+        qDebug() << "Popup created successfully from existing graphic";
+        
+        emit selectedFlightChanged();
+        
+    } catch (const std::exception& e) {
+        qDebug() << "Exception creating popup:" << e.what();
+        m_selectedFlightPopup = nullptr;
+    } catch (...) {
+        qDebug() << "Unknown exception creating popup";
+        m_selectedFlightPopup = nullptr;
+    }
 }
 
 void FlightTracker::loadCountryMappings()
 {
-    QFile file(":/resources/countries.json");  // Adjust path as needed
+    QFile file(":/resources/countries.json");
     if (!file.open(QIODevice::ReadOnly)) {
         qDebug() << "Could not open countries.json file";
         return;
@@ -741,12 +553,10 @@ void FlightTracker::loadCountryMappings()
         QJsonObject country = value.toObject();
         QString countryName = country["country"].toString();
 
-        // Handle the continent field (can be string or array for Russia)
         QJsonValue continentValue = country["continent"];
         QString continent;
 
         if (continentValue.isArray()) {
-            // For countries like Russia that span multiple continents, use the first one
             QJsonArray continentArray = continentValue.toArray();
             if (!continentArray.isEmpty()) {
                 continent = continentArray[0].toString();
@@ -763,497 +573,168 @@ void FlightTracker::loadCountryMappings()
     qDebug() << "Loaded" << m_countryToContinentMap.size() << "country mappings";
 }
 
-QString FlightTracker::extractCountryFromFlight(const QJsonArray& flightData)
+QString FlightTracker::extractCountryFromFlight(const FlightData& flight)
 {
-    if (flightData.size() >= 17) {
-        QString country = flightData[2].toString().trimmed();
-        return country.isEmpty() ? QString() : country;
-    }
-    return QString();
+    QString country = flight.country().trimmed();
+    return country.isEmpty() ? QString() : country;
 }
 
 QString FlightTracker::getCountryContinent(const QString& country)
 {
-    // First try exact match
     QString exactMatch = m_countryToContinentMap.value(country, QString());
     if (!exactMatch.isEmpty()) {
         return exactMatch;
     }
 
-    // Convert to lowercase for case-insensitive matching
     QString lowerCountry = country.toLower();
 
     if (lowerCountry == "republic of korea") {
         return m_countryToContinentMap.value("South Korea", "Asia");
     }
 
-    // Try to find the core country name within the full official name
     for (auto it = m_countryToContinentMap.begin(); it != m_countryToContinentMap.end(); ++it) {
         QString jsonCountryName = it.key().toLower();
         QString continent = it.value();
 
-        // Check both directions: does the OpenSky name contain the JSON name,
-        // or does the JSON name contain the OpenSky name
         if (lowerCountry.contains(jsonCountryName) || jsonCountryName.contains(lowerCountry)) {
-            qDebug() << "Matched:" << country << "with" << it.key() << "→" << continent;
             return continent;
         }
     }
 
-    // Special handling for common word variations
-    static QMap<QString, QString> wordReplacements = {
-                                                      {"republic of", ""},
-                                                      {"kingdom of", ""},
-                                                      {"state of", ""},
-                                                      {"federation", ""},
-                                                      {"democratic", ""},
-                                                      {"people's", ""},
-                                                      {"islamic", ""},
-                                                      {"arab", ""},
-                                                      {"socialist", ""},
-                                                      {"federal", ""},
-                                                      {"united", ""},
-                                                      {"the ", ""},
-                                                      {" the", ""},
-                                                      };
-
-    // Create simplified versions by removing common official words
-    QString simplifiedOpenSky = lowerCountry;
-    for (auto it = wordReplacements.begin(); it != wordReplacements.end(); ++it) {
-        simplifiedOpenSky = simplifiedOpenSky.replace(it.key(), it.value()).trimmed();
-    }
-
-    // Try matching with simplified names
-    for (auto it = m_countryToContinentMap.begin(); it != m_countryToContinentMap.end(); ++it) {
-        QString simplifiedJson = it.key().toLower();
-        for (auto wordIt = wordReplacements.begin(); wordIt != wordReplacements.end(); ++wordIt) {
-            simplifiedJson = simplifiedJson.replace(wordIt.key(), wordIt.value()).trimmed();
-        }
-
-        if (simplifiedOpenSky.contains(simplifiedJson) || simplifiedJson.contains(simplifiedOpenSky)) {
-            qDebug() << "Simplified match:" << country << "(" << simplifiedOpenSky << ") with"
-                     << it.key() << "(" << simplifiedJson << ") →" << it.value();
-            return it.value();
-        }
-    }
-
-    // Handle common name variations manually for problematic cases
+    // Handle common name variations
     if (lowerCountry.contains("republic of korea")) return "Asia";
     if (lowerCountry.contains("democratic people's republic of korea")) return "Asia";
     if (lowerCountry.contains("netherlands")) return "Europe";
     if (lowerCountry.contains("korea")) return "Asia";
     if (lowerCountry.contains("moldova")) return "Europe";
-    if (lowerCountry.contains("russia")) return "Europe";  // Could be Asia too
+    if (lowerCountry.contains("russia")) return "Europe";
     if (lowerCountry.contains("vietnam") || lowerCountry.contains("viet nam")) return "Asia";
-    if (lowerCountry.contains("libya")) return "Africa";
-    if (lowerCountry.contains("iran")) return "Asia";
-    if (lowerCountry.contains("syria")) return "Asia";
-    if (lowerCountry.contains("macedonia")) return "Europe";
-    if (lowerCountry.contains("bosnia")) return "Europe";
-    if (lowerCountry.contains("congo")) return "Africa";
 
-    // Log unknown countries for future reference
-    qDebug() << "No continent mapping found for:" << country;
     return "Other";
-}
-
-void FlightTracker::setSelectedCountries(const QStringList& countries)
-{
-    if (m_selectedCountries != countries) {
-        m_selectedCountries = countries;
-        emit selectedCountriesChanged();
-
-        // Apply filtering to existing flights immediately
-        applyFilters();
-    }
 }
 
 void FlightTracker::applyFilters()
 {
-    if (!m_flightOverlay) return;
+    if (!m_flightOverlay) {
+        qDebug() << "No flight overlay available for filtering";
+        return;
+    }
 
     GraphicListModel* graphics = m_flightOverlay->graphics();
+    if (!graphics) {
+        qDebug() << "No graphics model available";
+        return;
+    }
 
-    for (int i = 0; i < graphics->size(); ++i) {
+    int graphicsCount = graphics->size();
+    int flightsCount = m_flights.size();
+    
+    qDebug() << "Applying filters to" << graphicsCount << "graphics and" << flightsCount << "flights";
+
+    // Use the smaller of the two sizes to avoid out-of-bounds access
+    int maxCount = qMin(graphicsCount, flightsCount);
+
+    for (int i = 0; i < maxCount; ++i) {
         Graphic* graphic = graphics->at(i);
-        if (!graphic) continue;
-
-        QString cacheKey = QString::number(i);
-        if (m_flightDataCache.contains(cacheKey)) {
-            QJsonArray flightData = m_flightDataCache[cacheKey];
-            QString country = extractCountryFromFlight(flightData);
-            bool onGround = flightData[8].toBool();
-            double altitude = flightData[7].toDouble() * 3.28084; // Convert to feet
-            double speed = flightData[9].toDouble() * 1.94384;   // Convert to knots
-
-            // Check country filter
-            bool countryMatch = m_selectedCountries.contains(country);
-
-            // Check status filter
-            bool statusMatch = true;
-            if (m_selectedFlightStatus == "Airborne") {
-                statusMatch = !onGround;
-            } else if (m_selectedFlightStatus == "OnGround") {
-                statusMatch = onGround;
-            }
-
-            bool altitudeMatch = true;
-            double flightAltitude = 0.0;
-
-            if (!std::isnan(altitude) && altitude > 0) {
-                flightAltitude = altitude;  // Use actual altitude from API
-            } else {
-                flightAltitude = 0.0;  // Unknown/invalid altitude treated as ground level
-            }
-
-            // Apply altitude filter based on actual altitude
-            if (m_maxAltitudeFilter >= 40000.0) {
-                altitudeMatch = (flightAltitude >= m_minAltitudeFilter);
-            } else {
-                altitudeMatch = (flightAltitude >= m_minAltitudeFilter && flightAltitude <= m_maxAltitudeFilter);
-            }
-
-            bool speedMatch = true;
-            double flightSpeed = 0.0;
-
-            if (!std::isnan(speed) && speed > 0) {
-                flightSpeed = speed;  // Use actual speed from API
-            } else {
-                // Set defaults for unknown speeds based on altitude
-                if (!std::isnan(altitude) && altitude > 1000) {
-                    flightSpeed = 150.0;  // Unknown airborne speed: assume ~150 knots (typical cruise)
-                } else {
-                    flightSpeed = 0.0;    // Unknown ground speed: assume stationary
-                }
-            }
-
-            // Apply speed filter based on actual/estimated speed
-            if (m_maxSpeedFilter >= 600.0) {
-                speedMatch = (flightSpeed >= m_minSpeedFilter);
-            } else {
-                speedMatch = (flightSpeed >= m_minSpeedFilter && flightSpeed <= m_maxSpeedFilter);
-            }
-
-            bool verticalMatch = true;
-            if (m_selectedVerticalStatus != "All") {
-                double verticalRate = flightData[11].toDouble(); // vertical_rate from OpenSky API
-
-                if (m_selectedVerticalStatus == "Climbing") {
-                    verticalMatch = (!std::isnan(verticalRate) && verticalRate > 0.5); // > 0.5 m/s climbing
-                } else if (m_selectedVerticalStatus == "Descending") {
-                    verticalMatch = (!std::isnan(verticalRate) && verticalRate < -0.5); // < -0.5 m/s descending
-                } else if (m_selectedVerticalStatus == "Level") {
-                    verticalMatch = (std::isnan(verticalRate) || (verticalRate >= -0.5 && verticalRate <= 0.5)); // Level or unknown
-                }
-            }
-
-            // Show only if all filters match
-            bool shouldShow = countryMatch && statusMatch && altitudeMatch && speedMatch && verticalMatch;
-            graphic->setVisible(shouldShow);
-
-            if (!shouldShow && m_selectedGraphic && graphic == m_selectedGraphic) {
-                clearFlightSelection();
-            }
+        if (!graphic) {
+            qDebug() << "Null graphic at index" << i;
+            continue;
         }
-    }
-}
 
-void FlightTracker::setSelectedFlightStatus(const QString& status)
-{
-    if (m_selectedFlightStatus != status) {
-        m_selectedFlightStatus = status;
-        emit selectedFlightStatusChanged();
-        applyFilters();
-    }
-}
-
-void FlightTracker::setMinAltitudeFilter(double minAlt)
-{
-    if (m_minAltitudeFilter != minAlt) {
-        m_minAltitudeFilter = minAlt;
-        emit altitudeFilterChanged();
-        applyFilters();
-    }
-}
-
-void FlightTracker::setMaxAltitudeFilter(double maxAlt)
-{
-    if (m_maxAltitudeFilter != maxAlt) {
-        m_maxAltitudeFilter = maxAlt;
-        emit altitudeFilterChanged();
-        applyFilters();
-    }
-}
-
-void FlightTracker::setMinSpeedFilter(double minSpeed)
-{
-    if (m_minSpeedFilter != minSpeed) {
-        m_minSpeedFilter = minSpeed;
-        emit speedFilterChanged();
-        applyFilters();
-    }
-}
-
-void FlightTracker::setMaxSpeedFilter(double maxSpeed)
-{
-    if (m_maxSpeedFilter != maxSpeed) {
-        m_maxSpeedFilter = maxSpeed;
-        emit speedFilterChanged();
-        applyFilters();
-    }
-}
-
-void FlightTracker::setSelectedVerticalStatus(const QString& status)
-{
-    if (m_selectedVerticalStatus != status) {
-        m_selectedVerticalStatus = status;
-        emit selectedVerticalStatusChanged();
-        applyFilters();
-    }
-}
-
-void FlightTracker::updateSelectionGraphic()
-{
-    m_selectionOverlay->graphics()->clear();
-
-    if (!m_selectedGraphic || !m_flightOverlay)
-        return;
-
-    auto* originalSymbol = dynamic_cast<TextSymbol*>(m_selectedGraphic->symbol());
-    if (!originalSymbol)
-        return;
-
-    GraphicListModel* graphics = m_flightOverlay->graphics();
-    int selectedIndex = -1;
-    for (int i = 0; i < graphics->size(); ++i) {
-        if (graphics->at(i) == m_selectedGraphic) {
-            selectedIndex = i;
+        if (i >= m_flights.size()) {
+            qDebug() << "Flight index out of bounds:" << i;
             break;
         }
-    }
 
-    if (selectedIndex == -1)
-        return;
-
-    QString cacheKey = QString::number(selectedIndex);
-    QJsonArray flightData = m_flightDataCache.value(cacheKey);
-    if (flightData.isEmpty())
-        return;
-
-    double longitude = flightData[5].toDouble();
-    double latitude = flightData[6].toDouble();
-    Point flightPoint(longitude, latitude, SpatialReference::wgs84());
-
-    QString callsign = flightData[1].toString().trimmed();
-    QString icao = flightData[0].toString();
-    QString labelText = !callsign.isEmpty() ? callsign : icao.left(6);
-
-    float originalSize = originalSymbol->size();
-    float ringSize = originalSize + 14.0f;
-
-    SimpleLineSymbol* outline = new SimpleLineSymbol(
-        SimpleLineSymbolStyle::Solid,
-        QColor(255, 255, 255),
-        2.5f,
-        this
-        );
-
-    SimpleMarkerSymbol* ringSymbol = new SimpleMarkerSymbol(
-        SimpleMarkerSymbolStyle::Circle,
-        QColor(Qt::transparent),
-        ringSize,
-        this
-        );
-    ringSymbol->setOutline(outline);
-
-    Graphic* ringGraphic = new Graphic(flightPoint, ringSymbol, this);
-    m_selectionOverlay->graphics()->append(ringGraphic);
-
-    TextSymbol* labelSymbol = new TextSymbol(labelText,
-                                             QColor(Qt::white),
-                                             14.0f,
-                                             HorizontalAlignment::Center,
-                                             VerticalAlignment::Top,
-                                             this);
-    labelSymbol->setFontFamily("Arial");
-    labelSymbol->setAngle(0.0);
-    labelSymbol->setHaloColor(Qt::gray);
-    labelSymbol->setOffsetY(-16.0f);
-    labelSymbol->setHaloWidth(1.0f);
-
-    Point labelPoint(longitude, latitude - 0.0003, SpatialReference::wgs84());
-    Graphic* labelGraphic = new Graphic(labelPoint, labelSymbol, this);
-    m_selectionOverlay->graphics()->append(labelGraphic);
-}
-
-void FlightTracker::setShowTrack(bool show)
-{
-    if (m_showTrack != show) {
-        m_showTrack = show;
-        emit showTrackChanged();
-
-        if (m_showTrack && m_selectedGraphic) {
-            // Find the ICAO24 for selected flight
-            GraphicListModel* graphics = m_flightOverlay->graphics();
-            for (int i = 0; i < graphics->size(); ++i) {
-                if (graphics->at(i) == m_selectedGraphic) {
-                    QString cacheKey = QString::number(i);
-                    if (m_flightDataCache.contains(cacheKey)) {
-                        QJsonArray flightData = m_flightDataCache[cacheKey];
-                        QString icao24 = flightData[0].toString();
-                        fetchFlightTrack(icao24);
-                    }
-                    break;
-                }
-            }
-        } else if (!m_showTrack) {
-            clearTrackGraphics();
+        const FlightData& flight = m_flights[i];
+        if (!flight.isValid()) {
+            qDebug() << "Invalid flight data at index" << i;
+            continue;
         }
-    }
-}
+        
+        bool shouldShow = true;
 
-void FlightTracker::fetchFlightTrack(const QString& icao24)
-{
-    if (m_accessToken.isEmpty() || icao24.isEmpty()) {
-        return;
-    }
-
-    qDebug() << "Fetching track for aircraft:" << icao24;
-
-    // Use last update timestamp
-    qint64 timestamp = m_lastUpdateDateTime.toSecsSinceEpoch();
-
-    QUrl trackUrl(QString("https://opensky-network.org/api/tracks/all?icao24=%1&time=%2")
-                      .arg(icao24.toLower())
-                      .arg(timestamp));
-
-    QNetworkRequest request(trackUrl);
-    request.setRawHeader("Authorization", QString("Bearer %1").arg(m_accessToken).toUtf8());
-
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, &FlightTracker::onTrackDataReply);
-}
-
-void FlightTracker::clearTrackGraphics()
-{
-    if (m_trackOverlay) {
-        m_trackOverlay->graphics()->clear();
-    }
-}
-
-void FlightTracker::onTrackDataReply()
-{
-    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
-        return;
-    }
-
-    reply->deleteLater();
-
-    if (reply->error() != QNetworkReply::NoError) {
-        qDebug() << "Track data request failed:" << reply->errorString();
-        clearTrackGraphics();
-        return;
-    }
-
-    QByteArray data = reply->readAll();
-    QJsonDocument doc = QJsonDocument::fromJson(data);
-    QJsonObject trackObj = doc.object();
-
-    if (!trackObj.isEmpty()) {
-        drawFlightTrack(trackObj);
-    }
-}
-
-void FlightTracker::drawFlightTrack(const QJsonObject& trackData)
-{
-    clearTrackGraphics();
-
-    if (!trackData.contains("path")) {
-        qDebug() << "No path data in track response";
-        return;
-    }
-
-    QJsonArray path = trackData["path"].toArray();
-    if (path.isEmpty()) {
-        qDebug() << "Empty path in track data";
-        return;
-    }
-
-    // Collect all valid points
-    QList<Point> trackPoints;
-    QList<double> altitudes;
-
-    for (const QJsonValue& value : path) {
-        QJsonArray waypoint = value.toArray();
-        if (waypoint.size() >= 6) {
-            double lat = waypoint[1].toDouble();
-            double lon = waypoint[2].toDouble();
-            double altitude = waypoint[3].toDouble(); // meters
-            bool onGround = waypoint[5].toBool();
-
-            // Skip invalid points
-            if (lat == 0.0 && lon == 0.0) continue;
-
-            Point point(lon, lat, SpatialReference::wgs84());
-            trackPoints.append(point);
-
-            // Use 0 altitude if on ground or null
-            if (onGround || std::isnan(altitude)) {
-                altitude = 0.0;
+        // Check country filter
+        if (m_selectedCountries.isEmpty()) {
+            // No countries selected - hide all flights
+            shouldShow = false;
+        } else {
+            // Get all available countries to check if all are selected
+            QStringList allAvailableCountries;
+            for (auto it = m_availableCountries.begin(); it != m_availableCountries.end(); ++it) {
+                QStringList continentCountries = it.value().toStringList();
+                allAvailableCountries.append(continentCountries);
             }
-            altitudes.append(altitude);
+            
+            // Only apply country filter if not all countries are selected
+            if (m_selectedCountries.size() != allAvailableCountries.size()) {
+                QString country = extractCountryFromFlight(flight);
+                bool countryMatch = country.isEmpty() || m_selectedCountries.contains(country);
+                shouldShow = shouldShow && countryMatch;
+            }
+            // If all countries are selected, don't filter by country (shouldShow remains unchanged)
+        }
+
+        // Check status filter
+        if (m_selectedFlightStatus != "All") {
+            bool statusMatch = true;
+            if (m_selectedFlightStatus == "Airborne") {
+                statusMatch = !flight.onGround();
+            } else if (m_selectedFlightStatus == "OnGround") {
+                statusMatch = flight.onGround();
+            }
+            shouldShow = shouldShow && statusMatch;
+        }
+
+        // Check altitude filter
+        double altitudeFeet = flight.altitude() * 3.28084; // Convert to feet
+        if (altitudeFeet >= 0) { // Only filter if altitude is valid
+            bool altitudeMatch = (altitudeFeet >= m_minAltitudeFilter && altitudeFeet <= m_maxAltitudeFilter);
+            shouldShow = shouldShow && altitudeMatch;
+        }
+
+        // Check speed filter
+        double speedKnots = flight.velocity() * 1.94384; // Convert to knots
+        if (speedKnots >= 0) { // Only filter if speed is valid
+            bool speedMatch = (speedKnots >= m_minSpeedFilter && speedKnots <= m_maxSpeedFilter);
+            shouldShow = shouldShow && speedMatch;
+        }
+
+        // Check vertical status filter
+        if (m_selectedVerticalStatus != "All") {
+            double verticalRate = flight.verticalRate();
+            bool verticalMatch = true;
+            
+            if (m_selectedVerticalStatus == "Climbing") {
+                verticalMatch = (verticalRate > 0.5);
+            } else if (m_selectedVerticalStatus == "Descending") {
+                verticalMatch = (verticalRate < -0.5);
+            } else if (m_selectedVerticalStatus == "Level") {
+                verticalMatch = (verticalRate >= -0.5 && verticalRate <= 0.5);
+            }
+            shouldShow = shouldShow && verticalMatch;
+        }
+
+        // Safely set visibility
+        try {
+            graphic->setVisible(shouldShow);
+        } catch (...) {
+            qDebug() << "Exception setting visibility for graphic at index" << i;
+            continue;
+        }
+
+        // Clear selection if selected flight is filtered out
+        if (!shouldShow && m_selectedFlight.isValid() && flight.icao24() == m_selectedFlight.icao24()) {
+            clearFlightSelection();
         }
     }
 
-    if (trackPoints.size() < 2) {
-        qDebug() << "Not enough points for track";
-        return;
-    }
-
-    // Draw line segments between consecutive points
-    // Each segment gets colored based on the average altitude
-    for (int i = 0; i < trackPoints.size() - 1; ++i) {
-        PolylineBuilder polylineBuilder(SpatialReference::wgs84());
-        polylineBuilder.addPoint(trackPoints[i]);
-        polylineBuilder.addPoint(trackPoints[i + 1]);
-
-        Polyline segment = polylineBuilder.toPolyline();
-
-        // Use average altitude of the two points for color
-        double avgAltitude = (altitudes[i] + altitudes[i + 1]) / 2.0;
-        QColor lineColor = getAltitudeColor(avgAltitude);
-
-        SimpleLineSymbol* lineSymbol = new SimpleLineSymbol(
-            SimpleLineSymbolStyle::Solid,
-            lineColor,
-            3.0f,  // line width
-            this
-            );
-        lineSymbol->setAntiAlias(true);
-
-        Graphic* segmentGraphic = new Graphic(segment, lineSymbol, this);
-        m_trackOverlay->graphics()->append(segmentGraphic);
-    }
-
-    // Add small dots at each waypoint
-    for (int i = 0; i < trackPoints.size(); ++i) {
-        SimpleMarkerSymbol* dotSymbol = new SimpleMarkerSymbol(
-            SimpleMarkerSymbolStyle::Circle,
-            Qt::white,
-            3.0f,  // small dots
-            this
-            );
-        dotSymbol->setOutline(new SimpleLineSymbol(
-            SimpleLineSymbolStyle::Solid,
-            Qt::darkGray,
-            0.5f,
-            this
-            ));
-
-        Graphic* dotGraphic = new Graphic(trackPoints[i], dotSymbol, this);
-        m_trackOverlay->graphics()->append(dotGraphic);
-    }
+    qDebug() << "Filter application completed";
 }
 
-
+void FlightTracker::scheduleFilterUpdate()
+{
+    if (m_flightOverlay && !m_flights.isEmpty() && m_filterUpdateTimer) {
+        m_filterUpdateTimer->start(); // Restart the timer, will call applyFilters after delay
+    }
+}

@@ -8,6 +8,7 @@
         <file>CountryFilterTree.qml</file>
         <file>StatusFilterGroup.qml</file>
         <file>RangeFilterGroup.qml</file>
+        <file>Flight3DView.qml</file>
     </qresource>
     <qresource prefix="/images">
         <file>RadarLogo.png</file>
@@ -36,7 +37,10 @@
     <qresource prefix="/resources">
         <file>countries.json</file>
     </qresource>
-	    <qresource prefix="/config">
+    <qresource prefix="/config">
         <file>Config/config.json</file>
+    </qresource>
+    <qresource prefix="/">
+        <file>Flight3DView.qml</file>
     </qresource>
 </RCC>

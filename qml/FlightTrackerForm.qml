@@ -459,6 +459,24 @@ Item {
             }
         }
     }
+
+    Calcite.Button {
+        id: view3DButton
+        anchors.bottom: parent.bottom
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottomMargin: 32
+        text: "View in 3D"
+        z: 15
+        enabled: model.isAuthenticated && model.hasSelectedFlight
+
+        onClicked: {
+            console.log("3D View button clicked")
+            console.log("Model:", model)
+            switchTo3DRequested(model)
+        }
+    }
+    signal switchTo3DRequested(var flightModel)
+
     // Declare the C++ instance which creates the map etc. and supply the view
     FlightTracker {
         id: model

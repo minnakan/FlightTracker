@@ -58,3 +58,25 @@ qml/Config/config.json
 
 # build folder
 build/*
+
+# Claude Code configuration
+.claude/
+
+# Third-party SDKs (manage as dependencies)
+# arcgis-maps-sdk-toolkit-qt/ - now managed as git submodule
+
+# Generated files
+Generated/
+
+# Backup/old files
+*_old.*
+
+# IDE files
+.vscode/
+.vs/
+*.vcxproj.user
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini

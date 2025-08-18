@@ -11,6 +11,7 @@
 //
 
 #include "FlightTracker.h"
+#include "Flight3DViewer.h"
 
 #include "ArcGISRuntimeEnvironment.h"
 #include "MapQuickView.h"
@@ -96,6 +97,7 @@ int main(int argc, char *argv[])
 
     // Register the FlightTracker (QQuickItem) for QML
     qmlRegisterType<FlightTracker>("Esri.FlightTracker", 1, 0, "FlightTracker");
+    Flight3DViewer::init();
 
     qmlRegisterModule("Calcite", 1, 0);
 
