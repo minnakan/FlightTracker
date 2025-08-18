@@ -33,9 +33,17 @@ Follow the steps below to set up and run the Flight Tracker application locally.
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/minnakan/FlightTracker.git
-cd flight-tracker
+git clone --recurse-submodules https://github.com/minnakan/FlightTracker.git
+cd FlightTracker
 ```
+
+**Note**: The `--recurse-submodules` flag automatically downloads the ArcGIS toolkit dependency.
+
+If you've already cloned without submodules, initialize them:
+```bash
+git submodule update --init --recursive
+```
+
 ### 2. Install ArcGIS Maps SDK for Qt
 
 The app depends on the [ArcGIS Maps SDK for Qt](https://developers.arcgis.com/qt/). Follow these steps:
@@ -45,25 +53,16 @@ The app depends on the [ArcGIS Maps SDK for Qt](https://developers.arcgis.com/qt
 - Install and configure the SDK as per the [official installation guide](https://developers.arcgis.com/qt/install/).
 - Ensure your development environment (e.g., Qt Creator or CMake) can find the ArcGIS SDK headers and libraries.
 
-### 3. Install ArcGIS Maps SDK Toolkit for Qt (Calcite UI Components)
+### 3. ArcGIS Maps SDK Toolkit (Dependency Management)
 
-This project uses Calcite-styled UI components from the ArcGIS toolkit.
+This project uses Calcite-styled UI components from the ArcGIS toolkit, which is managed as a **git submodule** pinned to version `200.8.0.4551`.
 
-Clone the toolkit:
+✅ **Already handled**: The toolkit is automatically included when you clone with `--recurse-submodules` (step 1).
 
-```bash
-git clone https://github.com/Esri/arcgis-maps-sdk-toolkit-qt.git
-```
-
-Then:
-
-- Link the toolkit into your project using `.pri` (for qmake) or `CMakeLists.txt` (for CMake).
-- Ensure `calcite.qrc` is included in your Qt resource file (`.qrc`).
-- Make sure your QML files can access Calcite components by importing:
-
-  ```qml
-  import "qrc:/esri.com/imports/Calcite" 1.0 as Calcite
-  ```
+The toolkit provides:
+- Calcite UI components for modern styling
+- Pre-configured `.pri` files for easy integration
+- QML import path: `import "qrc:/esri.com/imports/Calcite" 1.0 as Calcite`
 
 ### 4. Create the Config File
 
