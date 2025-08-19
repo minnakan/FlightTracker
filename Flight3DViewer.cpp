@@ -17,6 +17,7 @@
 
 // Symbols and rendering
 #include "SimpleMarkerSceneSymbol.h"
+#include "ModelSceneSymbol.h"
 #include "SimpleRenderer.h"
 #include "RendererSceneProperties.h"
 #include "LayerSceneProperties.h"
@@ -35,6 +36,10 @@
 #include <QStandardPaths>
 #include <QDebug>
 #include <QtMath>
+#include <QFileInfo>
+#include <QCoreApplication>
+#include <QTemporaryDir>
+#include <QFile>
 
 using namespace Esri::ArcGISRuntime;
 
@@ -136,31 +141,87 @@ void Flight3DViewer::createFlightGraphic(const QJsonArray& flightData)
 
     // Convert altitude from meters to feet for display
     double altitudeFeet = altitude * 3.28084;
+    
+    const double minOffsetMeters = 50.0;
+    if (altitude < minOffsetMeters) {
+        altitude = minOffsetMeters;
+        altitudeFeet = altitude * 3.28084;
+    }
 
-    // Create aircraft symbol - you can replace this with a 3D model
-    SimpleMarkerSceneSymbol* aircraftSymbol = new SimpleMarkerSceneSymbol(
-        SimpleMarkerSceneSymbolStyle::Cone,
-        getAltitudeColor(altitudeFeet),
-        100, 100, 100,
-        SceneSymbolAnchorPosition::Center,
-        this);
+
+    static QString tempModelPath;
+    if (tempModelPath.isEmpty()) {
+        QTemporaryDir tempDir;
+        tempDir.setAutoRemove(false);
+        if (tempDir.isValid()) {
+            QString basePath = tempDir.path();
+            
+            // Extract all model files
+            QStringList filesToExtract = {
+                "11803_Airplane_v1_l1.obj",
+                "11803_Airplane_v1_l1.mtl",
+                "11803_Airplane_body_diff.jpg",
+                "11803_Airplane_tail_diff.jpg",
+                "11803_Airplane_wing_big_L_diff.jpg",
+                "11803_Airplane_wing_big_R_diff.jpg",
+                "11803_Airplane_wing_details_L_diff.jpg",
+                "11803_Airplane_wing_details_R_diff.jpg"
+            };
+            
+            for (const QString& file : filesToExtract) {
+                QString srcPath = ":/Resources/AirplaneModel/" + file;
+                QString destPath = basePath + "/" + file;
+                QFile::copy(srcPath, destPath);
+            }
+            
+            tempModelPath = basePath + "/11803_Airplane_v1_l1.obj";
+        }
+    }
+    
+    // Create aircraft symbol using extracted model
+    ModelSceneSymbol* aircraftSymbol = new ModelSceneSymbol(QUrl::fromLocalFile(tempModelPath), this);
+    
+    // Set aircraft scale (adjust these values to make it larger/smaller)
+    aircraftSymbol->setWidth(2);   // Adjust size as needed
+    aircraftSymbol->setHeight(2);
+    aircraftSymbol->setDepth(0.5);
+    
+    aircraftSymbol->setAnchorPosition(SceneSymbolAnchorPosition::Center);
+    
+    // Monitor model loading status
+    connect(aircraftSymbol, &ModelSceneSymbol::loadStatusChanged, [=]() {
+        if (aircraftSymbol->loadStatus() == LoadStatus::FailedToLoad) {
+            qDebug() << "Model failed to load!";
+        }
+    });
 
     // Create point for aircraft position
     Point aircraftPosition(longitude, latitude, altitude, SpatialReference::wgs84());
 
     // Create flight graphic
     m_flightGraphic = new Graphic(aircraftPosition, aircraftSymbol, this);
-    m_flightGraphic->attributes()->insertAttribute("HEADING", heading);
-    m_flightGraphic->attributes()->insertAttribute("PITCH", 0.0);
+    
+    // Adjust heading for model coordinate system (X-front to ArcGIS Y-north)
+    double adjustedHeading = heading - 90;
+    if (adjustedHeading < 0.0) adjustedHeading += 360.0;
+    
+    m_flightGraphic->attributes()->insertAttribute("HEADING", adjustedHeading);
+    m_flightGraphic->attributes()->insertAttribute("PITCH", -90.0);
 
     m_flightOverlay->graphics()->append(m_flightGraphic);
 
     // Create orbit camera controller
-    m_orbitCam = new OrbitGeoElementCameraController(m_flightGraphic, 2000, this);
-    m_orbitCam->setMinCameraDistance(100);
-    m_orbitCam->setMaxCameraDistance(10000);
-    m_orbitCam->setCameraHeadingOffset(0);
-    m_orbitCam->setCameraPitchOffset(45);
+    m_orbitCam = new OrbitGeoElementCameraController(m_flightGraphic, 5, this);
+    m_orbitCam->setMinCameraDistance(1);
+    m_orbitCam->setMaxCameraDistance(100000);
+    
+    // Disable auto pitch to prevent camera from following aircraft orientation
+    m_orbitCam->setAutoPitchEnabled(false);
+    m_orbitCam->setCameraHeadingOffset(90);
+    m_orbitCam->setCameraPitchOffset(75);
+    m_orbitCam->setTargetOffsetX(0);
+    m_orbitCam->setTargetOffsetY(0);
+    m_orbitCam->setTargetOffsetZ(0);
 
     // Connect camera signals
     connect(m_orbitCam, &OrbitGeoElementCameraController::cameraDistanceChanged,
@@ -171,6 +232,7 @@ void Flight3DViewer::createFlightGraphic(const QJsonArray& flightData)
             this, &Flight3DViewer::cameraPitchChanged);
 
     m_sceneView->setCameraController(m_orbitCam);
+    qDebug() << "Camera controller set to scene view";
 
     m_hasActiveFlight = true;
     emit activeFlightChanged();
@@ -232,16 +294,16 @@ void Flight3DViewer::followView()
     m_orbitCam->setTargetOffsetX(0);
     m_orbitCam->setTargetOffsetY(0);
     m_orbitCam->setTargetOffsetZ(0);
-    m_orbitCam->setCameraHeadingOffset(0);
-    m_orbitCam->setCameraPitchOffset(45);
-    m_orbitCam->setMinCameraDistance(100);
-    m_orbitCam->setCameraDistance(2000);
+    m_orbitCam->setCameraHeadingOffset(90);  // Behind the aircraft
+    m_orbitCam->setCameraPitchOffset(75);     // Normal pitch
+    m_orbitCam->setMinCameraDistance(1);
+    m_orbitCam->setCameraDistance(5);
 }
 
 // Property getters/setters
 double Flight3DViewer::cameraDistance() const
 {
-    return m_orbitCam ? m_orbitCam->cameraDistance() : 2000.0;
+    return m_orbitCam ? m_orbitCam->cameraDistance() : 5.0;
 }
 
 void Flight3DViewer::setCameraDistance(double distance)
@@ -283,5 +345,5 @@ void Flight3DViewer::displayFlight(const QVariantList& flightDataVariant)
     for (const QVariant& variant : flightDataVariant) {
         jsonArray.append(QJsonValue::fromVariant(variant));
     }
-    displayFlight(jsonArray);  // Call the existing QJsonArray version
+    displayFlight(jsonArray);
 }

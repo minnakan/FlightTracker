@@ -1,5 +1,14 @@
 <RCC>
     <qresource prefix="/Resources">
         <file>AppIcon.png</file>
+        <file>flightRadarIcon.png</file>
+        <file>AirplaneModel/11803_Airplane_v1_l1.obj</file>
+        <file>AirplaneModel/11803_Airplane_v1_l1.mtl</file>
+        <file>AirplaneModel/11803_Airplane_body_diff.jpg</file>
+        <file>AirplaneModel/11803_Airplane_tail_diff.jpg</file>
+        <file>AirplaneModel/11803_Airplane_wing_big_L_diff.jpg</file>
+        <file>AirplaneModel/11803_Airplane_wing_big_R_diff.jpg</file>
+        <file>AirplaneModel/11803_Airplane_wing_details_L_diff.jpg</file>
+        <file>AirplaneModel/11803_Airplane_wing_details_R_diff.jpg</file>
     </qresource>
 </RCC>

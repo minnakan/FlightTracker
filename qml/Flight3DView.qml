@@ -96,10 +96,10 @@ Item {
                 id: distanceSlider
                 width: parent.width
                 from: 100
-                to: 10000
+                to: 100000
                 value: flight3DViewer.cameraDistance
 
-                onValueChanged: {
+                onMoved: {
                     flight3DViewer.cameraDistance = value
                 }
             }
