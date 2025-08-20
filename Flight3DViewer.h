@@ -9,6 +9,8 @@
 namespace Esri::ArcGISRuntime {
 class Scene;
 class SceneQuickView;
+class Map;
+class MapQuickView;
 class GraphicsOverlay;
 class Graphic;
 class OrbitGeoElementCameraController;
@@ -18,12 +20,14 @@ class ArcGISTiledElevationSource;
 }
 
 Q_MOC_INCLUDE("SceneQuickView.h")
+Q_MOC_INCLUDE("MapQuickView.h")
 
 class Flight3DViewer : public QObject
 {
     Q_OBJECT
 
     Q_PROPERTY(Esri::ArcGISRuntime::SceneQuickView* sceneView READ sceneView WRITE setSceneView NOTIFY sceneViewChanged)
+    Q_PROPERTY(Esri::ArcGISRuntime::MapQuickView* mapView READ mapView WRITE setMapView NOTIFY mapViewChanged)
     Q_PROPERTY(double cameraDistance READ cameraDistance WRITE setCameraDistance NOTIFY cameraDistanceChanged)
     Q_PROPERTY(double cameraHeading READ cameraHeading WRITE setCameraHeading NOTIFY cameraHeadingChanged)
     Q_PROPERTY(double cameraPitch READ cameraPitch WRITE setCameraPitch NOTIFY cameraPitchChanged)
@@ -37,6 +41,9 @@ public:
 
     Esri::ArcGISRuntime::SceneQuickView* sceneView() const;
     void setSceneView(Esri::ArcGISRuntime::SceneQuickView* sceneView);
+
+    Esri::ArcGISRuntime::MapQuickView* mapView() const;
+    void setMapView(Esri::ArcGISRuntime::MapQuickView* mapView);
 
     double cameraDistance() const;
     void setCameraDistance(double distance);
@@ -58,6 +65,7 @@ public slots:
 
 signals:
     void sceneViewChanged();
+    void mapViewChanged();
     void cameraDistanceChanged();
     void cameraHeadingChanged();
     void cameraPitchChanged();
@@ -65,14 +73,20 @@ signals:
 
 private:
     void setupScene();
+    void setupMap();
     void createFlightGraphic(const QJsonArray& flightData);
+    void updateMinimapPosition();
     QColor getAltitudeColor(double altitude);
 
     Esri::ArcGISRuntime::Scene* m_scene = nullptr;
     Esri::ArcGISRuntime::SceneQuickView* m_sceneView = nullptr;
+    Esri::ArcGISRuntime::Map* m_map = nullptr;
+    Esri::ArcGISRuntime::MapQuickView* m_mapView = nullptr;
     Esri::ArcGISRuntime::GraphicsOverlay* m_flightOverlay = nullptr;
+    Esri::ArcGISRuntime::GraphicsOverlay* m_mapFlightOverlay = nullptr;
     Esri::ArcGISRuntime::OrbitGeoElementCameraController* m_orbitCam = nullptr;
     Esri::ArcGISRuntime::Graphic* m_flightGraphic = nullptr;
+    Esri::ArcGISRuntime::Graphic* m_mapFlightGraphic = nullptr;
     bool m_hasActiveFlight = false;
 };
 

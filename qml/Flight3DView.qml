@@ -17,6 +17,7 @@ Item {
     Flight3DViewer {
         id: flight3DViewer
         sceneView: sceneView
+        mapView: miniMapView
 
         Component.onCompleted: {
             // Check if we have valid flight data first
@@ -121,6 +122,36 @@ Item {
                     flight3DViewer.cameraHeading = value
                 }
             }
+        }
+    }
+
+    // Minimap in bottom-left corner
+    Rectangle {
+        id: minimapContainer
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        anchors.margins: 10
+        width: 300
+        height: 200
+        color: "black"
+        border.color: "white"
+        border.width: 2
+        radius: 5
+
+        MapView {
+            id: miniMapView
+            anchors.fill: parent
+            anchors.margins: 2
+        }
+
+        Text {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.margins: 5
+            text: "Map"
+            color: "white"
+            font.pixelSize: 12
+            font.bold: true
         }
     }
 

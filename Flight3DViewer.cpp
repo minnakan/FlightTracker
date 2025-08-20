@@ -5,9 +5,12 @@
 // Core ArcGIS includes
 #include "Scene.h"
 #include "SceneQuickView.h"
+#include "Map.h"
+#include "MapQuickView.h"
 #include "Surface.h"
 #include "SpatialReference.h"
 #include "Point.h"
+#include "Viewpoint.h"
 
 // Graphics includes
 #include "GraphicsOverlay.h"
@@ -17,6 +20,7 @@
 
 // Symbols and rendering
 #include "SimpleMarkerSceneSymbol.h"
+#include "SimpleMarkerSymbol.h"
 #include "ModelSceneSymbol.h"
 #include "SimpleRenderer.h"
 #include "RendererSceneProperties.h"
@@ -54,6 +58,7 @@ Flight3DViewer::~Flight3DViewer() = default;
 void Flight3DViewer::init()
 {
     qmlRegisterType<SceneQuickView>("Esri.FlightTracker", 1, 0, "SceneView");
+    qmlRegisterType<MapQuickView>("Esri.FlightTracker", 1, 0, "MapView");
     qmlRegisterType<Flight3DViewer>("Esri.FlightTracker", 1, 0, "Flight3DViewer");
 }
 
@@ -70,6 +75,21 @@ void Flight3DViewer::setSceneView(SceneQuickView* sceneView)
     m_sceneView = sceneView;
     setupScene();
     emit sceneViewChanged();
+}
+
+MapQuickView* Flight3DViewer::mapView() const
+{
+    return m_mapView;
+}
+
+void Flight3DViewer::setMapView(MapQuickView* mapView)
+{
+    if (!mapView || mapView == m_mapView)
+        return;
+
+    m_mapView = mapView;
+    setupMap();
+    emit mapViewChanged();
 }
 
 void Flight3DViewer::setupScene()
@@ -99,6 +119,21 @@ void Flight3DViewer::setupScene()
 
     m_sceneView->setArcGISScene(m_scene);
     m_sceneView->graphicsOverlays()->append(m_flightOverlay);
+}
+
+void Flight3DViewer::setupMap()
+{
+    if (!m_mapView)
+        return;
+
+    // Create map with imagery basemap (same as scene)
+    m_map = new Map(BasemapStyle::ArcGISImageryStandard, this);
+
+    // Create graphics overlay for 2D flight icon
+    m_mapFlightOverlay = new GraphicsOverlay(this);
+    
+    m_mapView->setMap(m_map);
+    m_mapView->graphicsOverlays()->append(m_mapFlightOverlay);
 }
 
 void Flight3DViewer::displayFlight(const QJsonArray& flightData)
@@ -142,7 +177,7 @@ void Flight3DViewer::createFlightGraphic(const QJsonArray& flightData)
     // Convert altitude from meters to feet for display
     double altitudeFeet = altitude * 3.28084;
     
-    const double minOffsetMeters = 50.0;
+    const double minOffsetMeters = 40.0;
     if (altitude < minOffsetMeters) {
         altitude = minOffsetMeters;
         altitudeFeet = altitude * 3.28084;
@@ -209,6 +244,29 @@ void Flight3DViewer::createFlightGraphic(const QJsonArray& flightData)
     m_flightGraphic->attributes()->insertAttribute("PITCH", -90.0);
 
     m_flightOverlay->graphics()->append(m_flightGraphic);
+
+    // Create 2D flight icon for minimap
+    if (m_mapView && m_mapFlightOverlay) {
+        // Create simple airplane icon for 2D map
+        SimpleMarkerSymbol* airplaneIcon = new SimpleMarkerSymbol(
+            SimpleMarkerSymbolStyle::Triangle,
+            getAltitudeColor(altitudeFeet),
+            20, this);  // Size 20 for visibility
+            
+        m_mapFlightGraphic = new Graphic(aircraftPosition, airplaneIcon, this);
+        m_mapFlightGraphic->attributes()->insertAttribute("HEADING", adjustedHeading);
+        
+        // Set rotation for the triangle to match heading
+        airplaneIcon->setAngle(adjustedHeading);
+        
+        m_mapFlightOverlay->graphics()->clear();
+        m_mapFlightOverlay->graphics()->append(m_mapFlightGraphic);
+        
+        // Center minimap on aircraft position with appropriate scale
+        // Rotate viewpoint so aircraft points north (rotate by negative heading)
+        Viewpoint mapViewpoint(aircraftPosition, 1000000, 0);
+        m_mapView->setViewpointAsync(mapViewpoint);
+    }
 
     // Create orbit camera controller
     m_orbitCam = new OrbitGeoElementCameraController(m_flightGraphic, 5, this);
