@@ -25,16 +25,17 @@
 #include "SimpleRenderer.h"
 #include "RendererSceneProperties.h"
 #include "LayerSceneProperties.h"
+#include "TextSymbol.h"
 
 // Camera and elevation
 #include "OrbitGeoElementCameraController.h"
 #include "ArcGISTiledElevationSource.h"
 #include "ElevationSourceListModel.h"
 
-// Enums - these are the key missing includes
 #include "MapTypes.h"        // For BasemapStyle
 #include "SceneViewTypes.h"  // For SurfacePlacement, SceneSymbolAnchorPosition
 #include "SymbolTypes.h"     // For SimpleMarkerSceneSymbolStyle
+#include "Basemap.h"         // For Basemap
 
 #include <QJsonArray>
 #include <QStandardPaths>
@@ -51,6 +52,8 @@ using namespace Esri::ArcGISRuntime;
 Flight3DViewer::Flight3DViewer(QObject *parent)
     : QObject(parent)
 {
+    m_darkBasemap = new Basemap(BasemapStyle::ArcGISImageryStandard, this);
+    m_lightBasemap = new Basemap(BasemapStyle::ArcGISLightGray, this);
 }
 
 Flight3DViewer::~Flight3DViewer() = default;
@@ -97,7 +100,7 @@ void Flight3DViewer::setupScene()
     if (!m_sceneView)
         return;
 
-    // Create scene with imagery basemap
+    // Create scene with imagery basemap (always, regardless of theme for better 3D visualization)
     m_scene = new Scene(BasemapStyle::ArcGISImageryStandard, this);
 
     // Add elevation source
@@ -126,7 +129,7 @@ void Flight3DViewer::setupMap()
     if (!m_mapView)
         return;
 
-    // Create map with imagery basemap (same as scene)
+    // Create map with imagery basemap (same as 3D scene for consistency)
     m_map = new Map(BasemapStyle::ArcGISImageryStandard, this);
 
     // Create graphics overlay for 2D flight icon
@@ -153,7 +156,6 @@ void Flight3DViewer::createFlightGraphic(const QJsonArray& flightData)
         return;
     }
 
-    // Use .toDouble() and check for valid values
     QJsonValue lonValue = flightData[5];
     QJsonValue latValue = flightData[6];
     QJsonValue altValue = flightData[7];
@@ -216,14 +218,14 @@ void Flight3DViewer::createFlightGraphic(const QJsonArray& flightData)
     // Create aircraft symbol using extracted model
     ModelSceneSymbol* aircraftSymbol = new ModelSceneSymbol(QUrl::fromLocalFile(tempModelPath), this);
     
-    // Set aircraft scale (adjust these values to make it larger/smaller)
-    aircraftSymbol->setWidth(2);   // Adjust size as needed
+
+    aircraftSymbol->setWidth(2);
     aircraftSymbol->setHeight(2);
     aircraftSymbol->setDepth(0.5);
     
     aircraftSymbol->setAnchorPosition(SceneSymbolAnchorPosition::Center);
     
-    // Monitor model loading status
+
     connect(aircraftSymbol, &ModelSceneSymbol::loadStatusChanged, [=]() {
         if (aircraftSymbol->loadStatus() == LoadStatus::FailedToLoad) {
             qDebug() << "Model failed to load!";
@@ -247,17 +249,18 @@ void Flight3DViewer::createFlightGraphic(const QJsonArray& flightData)
 
     // Create 2D flight icon for minimap
     if (m_mapView && m_mapFlightOverlay) {
-        // Create simple airplane icon for 2D map
-        SimpleMarkerSymbol* airplaneIcon = new SimpleMarkerSymbol(
-            SimpleMarkerSymbolStyle::Triangle,
-            getAltitudeColor(altitudeFeet),
-            20, this);  // Size 20 for visibility
+        // Create airplane symbol for 2D map with white color for visibility
+        QString aircraftChar = "✈";
+        QColor flightColor = QColor(Qt::white);  // Always white for better visibility on minimap
+        
+        TextSymbol* airplaneIcon = new TextSymbol(aircraftChar, flightColor, 18.0f,
+                                                 HorizontalAlignment::Center,
+                                                 VerticalAlignment::Middle, this);
+        airplaneIcon->setFontFamily("Arial Unicode MS");
+        airplaneIcon->setAngle(adjustedHeading);  // Rotate to match heading
             
         m_mapFlightGraphic = new Graphic(aircraftPosition, airplaneIcon, this);
         m_mapFlightGraphic->attributes()->insertAttribute("HEADING", adjustedHeading);
-        
-        // Set rotation for the triangle to match heading
-        airplaneIcon->setAngle(adjustedHeading);
         
         m_mapFlightOverlay->graphics()->clear();
         m_mapFlightOverlay->graphics()->append(m_mapFlightGraphic);
@@ -333,12 +336,11 @@ void Flight3DViewer::cockpitView()
 
     m_orbitCam->setMinCameraDistance(0);
 
-    // Handle the returned QFuture properly
     auto offsetFuture = m_orbitCam->setTargetOffsetsAsync(0, -10, 5, 1);
-    Q_UNUSED(offsetFuture) // Suppress the warning
+    Q_UNUSED(offsetFuture)
 
     auto moveFuture = m_orbitCam->moveCameraAsync(0, 0, 0, 1.0);
-    Q_UNUSED(moveFuture) // Suppress the warning
+    Q_UNUSED(moveFuture)
 
     m_orbitCam->setAutoPitchEnabled(true);
 }
@@ -352,8 +354,8 @@ void Flight3DViewer::followView()
     m_orbitCam->setTargetOffsetX(0);
     m_orbitCam->setTargetOffsetY(0);
     m_orbitCam->setTargetOffsetZ(0);
-    m_orbitCam->setCameraHeadingOffset(90);  // Behind the aircraft
-    m_orbitCam->setCameraPitchOffset(75);     // Normal pitch
+    m_orbitCam->setCameraHeadingOffset(90);
+    m_orbitCam->setCameraPitchOffset(75);
     m_orbitCam->setMinCameraDistance(1);
     m_orbitCam->setCameraDistance(5);
 }
@@ -395,6 +397,20 @@ void Flight3DViewer::setCameraPitch(double pitch)
 bool Flight3DViewer::hasActiveFlight() const
 {
     return m_hasActiveFlight;
+}
+
+bool Flight3DViewer::isDarkTheme() const
+{
+    return m_isDarkTheme;
+}
+
+void Flight3DViewer::setIsDarkTheme(bool isDark)
+{
+    if (m_isDarkTheme != isDark) {
+        m_isDarkTheme = isDark;
+        
+        emit isDarkThemeChanged();
+    }
 }
 
 void Flight3DViewer::displayFlight(const QVariantList& flightDataVariant)

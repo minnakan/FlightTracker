@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 
 Item {
+    property bool isDarkTheme: true
 
     Rectangle {
         id: rectangle
@@ -10,7 +11,7 @@ Item {
         anchors.rightMargin: 0
         anchors.topMargin: 0
         anchors.bottomMargin: 0
-        color: "#2b2b2b"
+        color: isDarkTheme ? "#2b2b2b" : "#f5f5f5"
 
         Image {
             id: image

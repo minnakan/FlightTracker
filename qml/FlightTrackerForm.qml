@@ -19,6 +19,8 @@ import "qrc:/esri.com/imports/Calcite" 1.0 as Calcite
 
 
 Item {
+    property bool isDarkTheme: true
+    signal toggleTheme()
 
     MapView {
         id: view
@@ -27,8 +29,24 @@ Item {
     }
 
     Component.onCompleted: {
-            Calcite.Calcite.theme = Calcite.Calcite.Dark
+            Calcite.Calcite.theme = isDarkTheme ? Calcite.Calcite.Dark : Calcite.Calcite.Light
+            // Initialize the basemap theme in the FlightTracker model with a small delay
+            // to ensure the C++ object is fully constructed
+            Qt.callLater(function() {
+                if (model) {
+                    model.isDarkTheme = isDarkTheme
+                }
+            })
         }
+
+    // Watch for theme changes
+    onIsDarkThemeChanged: {
+        Calcite.Calcite.theme = isDarkTheme ? Calcite.Calcite.Dark : Calcite.Calcite.Light
+        // Update the basemap in the FlightTracker model
+        if (model) {
+            model.isDarkTheme = isDarkTheme
+        }
+    }
 
     Rectangle {
         anchors.fill: view
@@ -360,6 +378,52 @@ Item {
 
                 onClicked: {
                     model.fetchFlightData()
+                }
+            }
+
+            // Separator line
+            Rectangle {
+                width: 1
+                height: refreshButton.height - 8
+                color: Calcite.Calcite.border2
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            // Theme toggle button
+            Rectangle {
+                id: themeToggleButton
+                width: 36
+                height: 36
+                radius: 4
+                color: themeButtonMouseArea.pressed ? 
+                       (isDarkTheme ? "#404040" : "#d0d0d0") :
+                       (themeButtonMouseArea.containsMouse ? 
+                        (isDarkTheme ? "#353535" : "#e0e0e0") : 
+                        "transparent")
+                border.color: themeButtonMouseArea.containsMouse ? Calcite.Calcite.border1 : "transparent"
+                border.width: 1
+                anchors.verticalCenter: parent.verticalCenter
+
+                Image {
+                    anchors.centerIn: parent
+                    width: 20
+                    height: 20
+                    source: isDarkTheme ? "qrc:/Resources/light-mode.png" : "qrc:/Resources/night-mode.png"
+                    fillMode: Image.PreserveAspectFit
+                }
+
+                MouseArea {
+                    id: themeButtonMouseArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        toggleTheme()
+                    }
+                }
+
+                Behavior on color {
+                    ColorAnimation { duration: 120 }
                 }
             }
 

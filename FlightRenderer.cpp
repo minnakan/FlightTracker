@@ -199,7 +199,7 @@ void FlightRenderer::updateFlightGraphics(GraphicsOverlay* overlay, const QList<
     qDebug() << "FlightRenderer: Created graphics for" << validFlights << "out of" << flights.size() << "flights";
 }
 
-void FlightRenderer::createSelectionGraphic(GraphicsOverlay* selectionOverlay, const FlightData& flight)
+void FlightRenderer::createSelectionGraphic(GraphicsOverlay* selectionOverlay, const FlightData& flight, bool isDarkTheme)
 {
     if (!selectionOverlay) return;
 
@@ -207,9 +207,10 @@ void FlightRenderer::createSelectionGraphic(GraphicsOverlay* selectionOverlay, c
 
     Point flightPoint(flight.longitude(), flight.latitude(), SpatialReference::wgs84());
 
-    // Create selection ring
+    // Create theme-aware selection ring
+    QColor ringColor = isDarkTheme ? QColor(255, 255, 255) : QColor(0, 0, 0);  // White for dark, black for light
     SimpleLineSymbol* outline = new SimpleLineSymbol(SimpleLineSymbolStyle::Solid,
-                                                    QColor(255, 255, 255), 2.5f, this);
+                                                    ringColor, 2.5f, this);
 
     SimpleMarkerSymbol* ringSymbol = new SimpleMarkerSymbol(SimpleMarkerSymbolStyle::Circle,
                                                            QColor(Qt::transparent), 30.0f, this);
@@ -218,12 +219,15 @@ void FlightRenderer::createSelectionGraphic(GraphicsOverlay* selectionOverlay, c
     Graphic* ringGraphic = new Graphic(flightPoint, ringSymbol, this);
     selectionOverlay->graphics()->append(ringGraphic);
 
-    // Create label
+    // Create theme-aware label
     QString labelText = !flight.callsign().isEmpty() ? flight.callsign() : flight.icao24().left(6);
-    TextSymbol* labelSymbol = new TextSymbol(labelText, QColor(Qt::white), 14.0f,
+    QColor labelColor = isDarkTheme ? QColor(Qt::white) : QColor(Qt::black);
+    QColor haloColor = isDarkTheme ? QColor(Qt::gray) : QColor(Qt::lightGray);
+    
+    TextSymbol* labelSymbol = new TextSymbol(labelText, labelColor, 14.0f,
                                            HorizontalAlignment::Center,
                                            VerticalAlignment::Top, this);
-    labelSymbol->setHaloColor(Qt::gray);
+    labelSymbol->setHaloColor(haloColor);
     labelSymbol->setHaloWidth(1.0f);
     labelSymbol->setOffsetY(-16.0f);
 

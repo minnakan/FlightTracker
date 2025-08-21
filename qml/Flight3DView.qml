@@ -7,6 +7,8 @@ Item {
     // Properties passed from StackView.push()
     property var flightData: null
     property var flightTracker: null
+    property bool isDarkTheme: true
+    signal toggleTheme()
 
     SceneView {
         id: sceneView
@@ -20,6 +22,13 @@ Item {
         mapView: miniMapView
 
         Component.onCompleted: {
+            // Initialize theme
+            Qt.callLater(function() {
+                if (flight3DViewer) {
+                    flight3DViewer.isDarkTheme = isDarkTheme
+                }
+            })
+            
             // Check if we have valid flight data first
             if (flightData && Array.isArray(flightData) && flightData.length > 0) {
                 console.log("Displaying flight in 3D view")
@@ -38,13 +47,19 @@ Item {
         }
     }
 
+    // Watch for theme changes
+    onIsDarkThemeChanged: {
+        if (flight3DViewer) {
+            flight3DViewer.isDarkTheme = isDarkTheme
+        }
+    }
+
     // Back to 2D button
     Calcite.Button {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.margins: 16
         text: "Back to 2D"
-
         onClicked: {
             backTo2DRequested()
         }
@@ -75,16 +90,10 @@ Item {
                 font.weight: Font.Medium
             }
 
-            Row {
-                spacing: 8
-                Calcite.Button {
-                    text: "Follow"
-                    onClicked: flight3DViewer.followView()
-                }
-                Calcite.Button {
-                    text: "Cockpit"
-                    onClicked: flight3DViewer.cockpitView()
-                }
+            Calcite.Button {
+                text: "Follow"
+                anchors.horizontalCenter: parent.horizontalCenter
+                onClicked: flight3DViewer.followView()
             }
 
             Text {
@@ -93,7 +102,7 @@ Item {
                 font.pixelSize: 10
             }
 
-            Slider {
+            Calcite.Slider {
                 id: distanceSlider
                 width: parent.width
                 from: 100
@@ -111,7 +120,7 @@ Item {
                 font.pixelSize: 10
             }
 
-            Slider {
+            Calcite.Slider {
                 id: headingSlider
                 width: parent.width
                 from: -180

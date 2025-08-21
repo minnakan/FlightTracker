@@ -10,5 +10,7 @@
         <file>AirplaneModel/11803_Airplane_wing_big_R_diff.jpg</file>
         <file>AirplaneModel/11803_Airplane_wing_details_L_diff.jpg</file>
         <file>AirplaneModel/11803_Airplane_wing_details_R_diff.jpg</file>
+        <file>light-mode.png</file>
+        <file>night-mode.png</file>
     </qresource>
 </RCC>

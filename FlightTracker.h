@@ -12,6 +12,7 @@ class MapQuickView;
 class GraphicsOverlay;
 class Popup;
 class Graphic;
+class Basemap;
 }
 
 class OpenSkyAuthManager;
@@ -31,6 +32,7 @@ class FlightTracker : public QObject
     Q_PROPERTY(Esri::ArcGISRuntime::Popup *selectedFlightPopup READ selectedFlightPopup NOTIFY selectedFlightChanged)
     Q_PROPERTY(QString lastUpdateTime READ lastUpdateTime NOTIFY lastUpdateTimeChanged)
     Q_PROPERTY(bool showTrack READ showTrack WRITE setShowTrack NOTIFY showTrackChanged)
+    Q_PROPERTY(bool isDarkTheme READ isDarkTheme WRITE setIsDarkTheme NOTIFY isDarkThemeChanged)
     
     // Filter properties
     Q_PROPERTY(QVariantMap availableCountries READ availableCountries NOTIFY availableCountriesChanged)
@@ -54,6 +56,8 @@ public:
     QString lastUpdateTime() const { return m_lastUpdateTime; }
     bool showTrack() const { return m_showTrack; }
     void setShowTrack(bool show);
+    bool isDarkTheme() const { return m_isDarkTheme; }
+    void setIsDarkTheme(bool isDark);
     
     // Filter property getters/setters
     QVariantMap availableCountries() const { return m_availableCountries; }
@@ -86,6 +90,7 @@ signals:
     void selectedFlightChanged();
     void lastUpdateTimeChanged();
     void showTrackChanged();
+    void isDarkThemeChanged();
     
     // Filter signals
     void availableCountriesChanged();
@@ -122,6 +127,10 @@ private:
     Esri::ArcGISRuntime::Map *m_map = nullptr;
     Esri::ArcGISRuntime::MapQuickView *m_mapView = nullptr;
     
+    // Pre-created basemaps for fast switching
+    Esri::ArcGISRuntime::Basemap *m_darkBasemap = nullptr;
+    Esri::ArcGISRuntime::Basemap *m_lightBasemap = nullptr;
+    
     // Services
     OpenSkyAuthManager* m_authManager;
     FlightDataService* m_dataService;
@@ -144,6 +153,8 @@ private:
     QTimer* m_flightUpdateTimer;
     QTimer* m_filterUpdateTimer;
     bool m_showTrack = false;
+    bool m_isDarkTheme = true;
+    bool m_devMode = true;  // Set to false for production
     
     // Filter state
     QVariantMap m_availableCountries;

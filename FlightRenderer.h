@@ -32,7 +32,7 @@ public:
                              const QList<FlightData>& flights);
 
     void createSelectionGraphic(Esri::ArcGISRuntime::GraphicsOverlay* selectionOverlay,
-                               const FlightData& flight);
+                               const FlightData& flight, bool isDarkTheme = true);
 
     void drawFlightTrack(Esri::ArcGISRuntime::GraphicsOverlay* trackOverlay,
                         const QJsonObject& trackData);

@@ -17,6 +17,7 @@ class OrbitGeoElementCameraController;
 class SimpleMarkerSceneSymbol;
 class SimpleRenderer;
 class ArcGISTiledElevationSource;
+class Basemap;
 }
 
 Q_MOC_INCLUDE("SceneQuickView.h")
@@ -32,6 +33,7 @@ class Flight3DViewer : public QObject
     Q_PROPERTY(double cameraHeading READ cameraHeading WRITE setCameraHeading NOTIFY cameraHeadingChanged)
     Q_PROPERTY(double cameraPitch READ cameraPitch WRITE setCameraPitch NOTIFY cameraPitchChanged)
     Q_PROPERTY(bool hasActiveFlight READ hasActiveFlight NOTIFY activeFlightChanged)
+    Q_PROPERTY(bool isDarkTheme READ isDarkTheme WRITE setIsDarkTheme NOTIFY isDarkThemeChanged)
 
 public:
     explicit Flight3DViewer(QObject *parent = nullptr);
@@ -56,6 +58,9 @@ public:
 
     bool hasActiveFlight() const;
 
+    bool isDarkTheme() const;
+    void setIsDarkTheme(bool isDark);
+
 public slots:
     Q_INVOKABLE void displayFlight(const QJsonArray& flightData);
     Q_INVOKABLE void clearFlight();
@@ -70,6 +75,7 @@ signals:
     void cameraHeadingChanged();
     void cameraPitchChanged();
     void activeFlightChanged();
+    void isDarkThemeChanged();
 
 private:
     void setupScene();
@@ -88,6 +94,12 @@ private:
     Esri::ArcGISRuntime::Graphic* m_flightGraphic = nullptr;
     Esri::ArcGISRuntime::Graphic* m_mapFlightGraphic = nullptr;
     bool m_hasActiveFlight = false;
+    
+    // Theme management
+    bool m_isDarkTheme = true;
+    // Pre-created basemaps
+    Esri::ArcGISRuntime::Basemap *m_darkBasemap = nullptr;
+    Esri::ArcGISRuntime::Basemap *m_lightBasemap = nullptr;
 };
 
 #endif

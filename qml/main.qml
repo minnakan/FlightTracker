@@ -31,11 +31,19 @@ ApplicationWindow {
     minimumWidth: 400
     minimumHeight: 300
 
+    // Theme management
+    property bool isDarkTheme: true
+    
+    function toggleTheme() {
+        isDarkTheme = !isDarkTheme
+    }
+
     StackView {
         id: stack
         anchors.fill: parent
 
         initialItem: MenuScreen {
+            isDarkTheme: window.isDarkTheme
             onStartClicked: {
                 stack.push(flightTrackerComponent)
             }
@@ -45,6 +53,8 @@ ApplicationWindow {
     Component {
         id: flightTrackerComponent
         FlightTrackerForm {
+            isDarkTheme: window.isDarkTheme
+            onToggleTheme: window.toggleTheme()
             onSwitchTo3DRequested: function(flightModel) {
                 // Check if the flightModel is valid and has the method
                 if (flightModel && typeof flightModel.getSelectedFlightData === "function") {
@@ -60,6 +70,8 @@ ApplicationWindow {
     Component {
         id: flight3DComponent
         Flight3DView {
+            isDarkTheme: window.isDarkTheme
+            onToggleTheme: window.toggleTheme()
             onBackTo2DRequested: {
                 stack.pop()
             }

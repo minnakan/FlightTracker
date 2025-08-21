@@ -5,6 +5,7 @@
 #include "Map.h"
 #include "MapQuickView.h"
 #include "MapTypes.h"
+#include "Basemap.h"
 #include "GraphicsOverlay.h"
 #include "Graphic.h"
 #include "GraphicListModel.h"
@@ -26,7 +27,7 @@ using namespace Esri::ArcGISRuntime;
 
 FlightTracker::FlightTracker(QObject *parent)
     : QObject(parent)
-    , m_map(new Map(BasemapStyle::ArcGISHumanGeographyDark, this))
+    , m_map(new Map(BasemapStyle::ArcGISHumanGeographyDark, this))  // Start with dark basemap
     , m_authManager(new OpenSkyAuthManager(this))
     , m_dataService(new FlightDataService(this))
     , m_renderer(new FlightRenderer(this))
@@ -37,6 +38,10 @@ FlightTracker::FlightTracker(QObject *parent)
     , m_flightUpdateTimer(new QTimer(this))
     , m_filterUpdateTimer(new QTimer(this))
 {
+    // Initialize pre-created basemaps for fast switching
+    m_darkBasemap = new Basemap(BasemapStyle::ArcGISHumanGeographyDark, this);
+    m_lightBasemap = new Basemap(BasemapStyle::ArcGISLightGray, this);
+    
     loadConfig();
     loadCountryMappings();
     
@@ -137,6 +142,33 @@ void FlightTracker::setShowTrack(bool show)
     }
 }
 
+void FlightTracker::setIsDarkTheme(bool isDark)
+{
+    if (m_isDarkTheme != isDark) {
+        m_isDarkTheme = isDark;
+        
+        // Switch between pre-created basemaps for fast performance
+        if (m_map && m_darkBasemap && m_lightBasemap) {
+            Basemap* targetBasemap = isDark ? m_darkBasemap : m_lightBasemap;
+            m_map->setBasemap(targetBasemap);
+        } else if (m_map) {
+            // Fallback: create basemap on demand if pre-created ones aren't ready
+            BasemapStyle newStyle = isDark ? 
+                BasemapStyle::ArcGISHumanGeographyDark : 
+                BasemapStyle::ArcGISLightGray;
+            m_map->setBasemap(new Basemap(newStyle, this));
+        }
+        
+        // Recreate popup and selection graphic with new theme colors if a flight is selected
+        if (m_selectedFlight.isValid()) {
+            createFlightPopup(m_selectedFlight);
+            m_renderer->createSelectionGraphic(m_selectionOverlay, m_selectedFlight, m_isDarkTheme);
+        }
+        
+        emit isDarkThemeChanged();
+    }
+}
+
 void FlightTracker::fetchFlightData()
 {
     if (!isAuthenticated()) {
@@ -155,7 +187,7 @@ void FlightTracker::selectFlightAtPoint(QPointF screenPoint)
     if (flight.isValid() && !(flight.icao24() == m_selectedFlight.icao24())) {
         m_selectedFlight = flight;
         createFlightPopup(flight);
-        m_renderer->createSelectionGraphic(m_selectionOverlay, flight);
+        m_renderer->createSelectionGraphic(m_selectionOverlay, flight, m_isDarkTheme);
         
         if (m_showTrack) {
             m_dataService->fetchFlightTrack(flight.icao24());
@@ -284,6 +316,39 @@ void FlightTracker::onAuthenticationSuccess()
     emit authenticationSuccess();
     emit authenticationChanged();
     
+    // If dev mode is enabled, create dummy flight data immediately for testing
+    if (m_devMode) {
+        QList<FlightData> dummyFlights;
+        
+        // Create dummy flight data using QJsonArray format (same as OpenSky API)
+        QJsonArray dummyData;
+        dummyData.append("TEST01");        // [0] icao24
+        dummyData.append("DEV123");        // [1] callsign
+        dummyData.append("United States"); // [2] country
+        dummyData.append(0);               // [3] time_position (unused)
+        dummyData.append(0);               // [4] last_contact (unused)
+        dummyData.append(-74.0060);        // [5] longitude (New York City)
+        dummyData.append(40.7128);         // [6] latitude
+        dummyData.append(10000);           // [7] altitude (10,000 meters)
+        dummyData.append(false);           // [8] on_ground
+        dummyData.append(250);             // [9] velocity (250 m/s)
+        dummyData.append(45);              // [10] heading (45 degrees)
+        dummyData.append(5.0);             // [11] vertical_rate (climbing)
+        dummyData.append(QJsonValue());    // [12] sensors (unused)
+        dummyData.append(QJsonValue());    // [13] geo_altitude (unused)
+        dummyData.append("1234");          // [14] squawk
+        dummyData.append(false);           // [15] spi (unused)
+        dummyData.append(0);               // [16] position_source (unused)
+        
+        FlightData dummyFlight(dummyData);
+        dummyFlights.append(dummyFlight);
+        
+        // Simulate receiving flight data
+        onFlightDataReceived(dummyFlights);
+        
+        qDebug() << "Dev mode: Added dummy flight data for testing";
+    }
+    
     fetchFlightData();
     m_flightUpdateTimer->start();
 }
@@ -308,6 +373,33 @@ void FlightTracker::onFlightDataReceived(const QList<FlightData>& flights)
         }
         
         m_flights = flights;
+        
+        // Add dummy flight data for testing when dev mode is enabled
+        if (m_devMode) {
+            // Create dummy flight data using QJsonArray format (same as OpenSky API)
+            QJsonArray dummyData;
+            dummyData.append("TEST01");        // [0] icao24
+            dummyData.append("DEV123");        // [1] callsign
+            dummyData.append("United States"); // [2] country
+            dummyData.append(0);               // [3] time_position (unused)
+            dummyData.append(0);               // [4] last_contact (unused)
+            dummyData.append(-74.0060);        // [5] longitude (New York City)
+            dummyData.append(40.7128);         // [6] latitude
+            dummyData.append(10000);           // [7] altitude (10,000 meters)
+            dummyData.append(false);           // [8] on_ground
+            dummyData.append(250);             // [9] velocity (250 m/s)
+            dummyData.append(45);              // [10] heading (45 degrees)
+            dummyData.append(5.0);             // [11] vertical_rate (climbing)
+            dummyData.append(QJsonValue());    // [12] sensors (unused)
+            dummyData.append(QJsonValue());    // [13] geo_altitude (unused)
+            dummyData.append("1234");          // [14] squawk
+            dummyData.append(false);           // [15] spi (unused)
+            dummyData.append(0);               // [16] position_source (unused)
+            
+            FlightData dummyFlight(dummyData);
+            m_flights.append(dummyFlight);
+        }
+        
         m_lastUpdateDateTime = QDateTime::currentDateTime();
         updateDisplayTime();
         
@@ -382,7 +474,7 @@ void FlightTracker::onFlightDataReceived(const QList<FlightData>& flights)
             if (flight.icao24() == m_selectedFlight.icao24()) {
                 m_selectedFlight = flight;
                 createFlightPopup(flight);
-                m_renderer->createSelectionGraphic(m_selectionOverlay, flight);
+                m_renderer->createSelectionGraphic(m_selectionOverlay, flight, m_isDarkTheme);
                 break;
             }
         }
@@ -464,47 +556,51 @@ void FlightTracker::createFlightPopup(const FlightData& flight)
             QTimer::singleShot(50, oldPopup, &QObject::deleteLater);
         }
 
-    QString title = flight.callsign().isEmpty() ? 
-                   QString("Flight %1").arg(flight.icao24().left(6)) : flight.callsign();
+        QString title = flight.callsign().isEmpty() ?
+                       QString("Flight %1").arg(flight.icao24().left(6)) : flight.callsign();
 
-    PopupDefinition* popupDef = new PopupDefinition(this);
-    popupDef->setTitle(title);
+        PopupDefinition* popupDef = new PopupDefinition(this);
+        popupDef->setTitle(title);
 
-    QString htmlContent = "<div style='font-family: Arial, sans-serif; color: #FFFFFF;'>";
-    htmlContent += "<table style='border-collapse: collapse; width: 100%; color: #FFFFFF;'>";
+        // Theme-aware colors
+        QString textColor = m_isDarkTheme ? "#FFFFFF" : "#000000";
+        QString labelColor = m_isDarkTheme ? "#F8F8F8" : "#333333";
+        QString borderColor = m_isDarkTheme ? "#4A4A4A" : "#CCCCCC";
 
-    auto addRow = [&](const QString& label, const QString& value) {
-        htmlContent += QString("<tr><td style='padding: 4px; border-bottom: 1px solid #4A4A4A; font-weight: bold; color: #F8F8F8;'>%1:</td>").arg(label);
-        htmlContent += QString("<td style='padding: 4px; border-bottom: 1px solid #4A4A4A; color: #FFFFFF;'>%2</td></tr>").arg(value);
-    };
+        QString htmlContent = QString("<div style='font-family: Arial, sans-serif; color: %1;'>").arg(textColor);
+        htmlContent += QString("<table style='border-collapse: collapse; width: 100%; color: %1;'>").arg(textColor);
 
-    addRow("ICAO24", flight.icao24());
-    addRow("Callsign", flight.callsign().isEmpty() ? "Unknown" : flight.callsign());
-    addRow("Country", flight.country().isEmpty() ? "Unknown" : flight.country());
-    addRow("Status", flight.onGround() ? "On Ground" : "Airborne");
-    addRow("Position", QString("%1°, %2°").arg(flight.latitude(), 0, 'f', 6).arg(flight.longitude(), 0, 'f', 6));
-    
-    if (flight.altitude() > 0) {
-        addRow("Altitude", QString("%1 m (%2 ft)")
-                   .arg(flight.altitude(), 0, 'f', 0)
-                   .arg(flight.altitude() * 3.28084, 0, 'f', 0));
-    }
-    
-    if (flight.velocity() > 0) {
-        addRow("Speed", QString("%1 m/s (%2 knots)")
-                   .arg(flight.velocity(), 0, 'f', 1)
-                   .arg(flight.velocity() * 1.94384, 0, 'f', 1));
-    }
+        auto addRow = [&](const QString& label, const QString& value) {
+            htmlContent += QString("<tr><td style='padding: 4px; border-bottom: 1px solid %1; font-weight: bold; color: %2;'>%3:</td>").arg(borderColor, labelColor, label);
+            htmlContent += QString("<td style='padding: 4px; border-bottom: 1px solid %1; color: %2;'>%3</td></tr>").arg(borderColor, textColor, value);
+        };
 
-    htmlContent += "</table></div>";
+        addRow("ICAO24", flight.icao24());
+        addRow("Callsign", flight.callsign().isEmpty() ? "Unknown" : flight.callsign());
+        addRow("Country", flight.country().isEmpty() ? "Unknown" : flight.country());
+        addRow("Status", flight.onGround() ? "On Ground" : "Airborne");
+        addRow("Position", QString("%1°, %2°").arg(flight.latitude(), 0, 'f', 6).arg(flight.longitude(), 0, 'f', 6));
 
-    TextPopupElement* textElement = new TextPopupElement(htmlContent, this);
-    QList<PopupElement*> elements;
-    elements.append(textElement);
-    popupDef->setElements(elements);
+        if (flight.altitude() > 0) {
+            addRow("Altitude", QString("%1 m (%2 ft)")
+                       .arg(flight.altitude(), 0, 'f', 0)
+                       .arg(flight.altitude() * 3.28084, 0, 'f', 0));
+        }
 
-        // Use the existing graphic from the overlay instead of creating a new one
-        // This matches the old implementation pattern
+        if (flight.velocity() > 0) {
+            addRow("Speed", QString("%1 m/s (%2 knots)")
+                       .arg(flight.velocity(), 0, 'f', 1)
+                       .arg(flight.velocity() * 1.94384, 0, 'f', 1));
+        }
+
+        htmlContent += "</table></div>";
+
+        TextPopupElement* textElement = new TextPopupElement(htmlContent, this);
+        QList<PopupElement*> elements;
+        elements.append(textElement);
+        popupDef->setElements(elements);
+
+
         GraphicListModel* graphics = m_flightOverlay->graphics();
         Graphic* flightGraphic = nullptr;
         
